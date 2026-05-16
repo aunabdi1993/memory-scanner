@@ -48,36 +48,100 @@ export interface PhotoListResponse {
   count: number;
 }
 
-/** Throw a descriptive error on non-2xx responses. */
-async function ensureOk(res: Response): Promise<Response> {
-  if (res.ok) return res;
-  let detail = `${res.status} ${res.statusText}`;
-  try {
-    const body = await res.json();
-    if (body?.detail) detail = String(body.detail);
-  } catch {
-    // ignore parse errors
-  }
-  throw new Error(`API error: ${detail}`);
-}
+/* ------------------------------------------------------------------ */
+/* Errors                                                              */
+/* ------------------------------------------------------------------ */
 
-/** GET /health — ping the backend. */
-export async function checkHealth(): Promise<HealthResponse> {
-  const res = await fetch(`${BASE_URL}/health`, {
-    signal: AbortSignal.timeout(5000),
-  });
-  await ensureOk(res);
-  return (await res.json()) as HealthResponse;
-}
-
-/**
- * Marker thrown by every public function in this module — callers can
- * tell our errors from generic ones with `instanceof ApiError`.
- */
+/** Base error every public function in this module throws. */
 export class ApiError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
     super(message);
     this.name = 'ApiError';
+  }
+}
+
+/** TCP/DNS/CORS-level failure — backend was never reached. */
+export class NetworkError extends ApiError {
+  constructor(message = 'Network unreachable', cause?: unknown) {
+    super(message, cause);
+    this.name = 'NetworkError';
+  }
+}
+
+/** Request didn't complete inside the per-call timeout. */
+export class TimeoutError extends ApiError {
+  constructor(message = 'Request timed out', cause?: unknown) {
+    super(message, cause);
+    this.name = 'TimeoutError';
+  }
+}
+
+/** Backend responded but with a 4xx/5xx. */
+export class HttpError extends ApiError {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = 'HttpError';
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Internals                                                           */
+/* ------------------------------------------------------------------ */
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+interface RequestOptions extends Omit<RequestInit, 'signal'> {
+  timeoutMs?: number;
+}
+
+async function request(path: string, opts: RequestOptions = {}): Promise<Response> {
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...init } = opts;
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      ...init,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'TimeoutError') {
+      throw new TimeoutError(`Timed out after ${timeoutMs}ms`, e);
+    }
+    throw new NetworkError('Could not reach the backend', e);
+  }
+
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      // body wasn't JSON — keep status text.
+    }
+    throw new HttpError(res.status, detail);
+  }
+  return res;
+}
+
+/* ------------------------------------------------------------------ */
+/* Public API                                                          */
+/* ------------------------------------------------------------------ */
+
+/** GET /health — ping the backend. Throws on any failure. */
+export async function checkHealth(): Promise<HealthResponse> {
+  const res = await request('/health', { timeoutMs: 5_000 });
+  return (await res.json()) as HealthResponse;
+}
+
+/**
+ * Lower-noise version of {@link checkHealth} for the home-screen status
+ * dot: returns 'ok' or 'unreachable' instead of throwing.
+ */
+export async function connectivityCheck(): Promise<'ok' | 'unreachable'> {
+  try {
+    const h = await checkHealth();
+    return h.status === 'ok' ? 'ok' : 'unreachable';
+  } catch {
+    return 'unreachable';
   }
 }
 
@@ -93,19 +157,60 @@ export async function scanPhoto(uri: string): Promise<ScanResponse> {
     name: 'photo.jpg',
     type: 'image/jpeg',
   } as unknown as Blob);
-
-  let res: Response;
-  try {
-    res = await fetch(`${BASE_URL}/scan`, {
-      method: 'POST',
-      body: form,
-      signal: AbortSignal.timeout(30000),
-    });
-  } catch (e) {
-    throw new ApiError('Network error during scan', e);
-  }
-  await ensureOk(res);
+  const res = await request('/scan', { method: 'POST', body: form });
   return (await res.json()) as ScanResponse;
+}
+
+/**
+ * Same as {@link scanPhoto} but reports upload progress 0-1 via *onProgress*.
+ *
+ * Uses XMLHttpRequest because fetch doesn't expose upload progress in
+ * React Native. Used by the scan screen's progress bar (PR 13).
+ */
+export function scanPhotoWithProgress(
+  uri: string,
+  onProgress?: (fraction: number) => void,
+): Promise<ScanResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${BASE_URL}/scan`);
+    xhr.timeout = DEFAULT_TIMEOUT_MS;
+
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable && onProgress) {
+        onProgress(ev.loaded / ev.total);
+      }
+    };
+    xhr.ontimeout = () =>
+      reject(new TimeoutError(`Timed out after ${DEFAULT_TIMEOUT_MS}ms`));
+    xhr.onerror = () => reject(new NetworkError('Could not reach the backend'));
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText) as ScanResponse);
+        } catch (e) {
+          reject(new ApiError('Malformed scan response', e));
+        }
+      } else {
+        let detail = `${xhr.status} ${xhr.statusText}`;
+        try {
+          const body = JSON.parse(xhr.responseText);
+          if (body?.detail) detail = String(body.detail);
+        } catch {
+          // not json
+        }
+        reject(new HttpError(xhr.status, detail));
+      }
+    };
+
+    const form = new FormData();
+    form.append('photo', {
+      uri,
+      name: 'photo.jpg',
+      type: 'image/jpeg',
+    } as unknown as Blob);
+    xhr.send(form);
+  });
 }
 
 /** POST /process/{id} — embed the chosen date into EXIF. */
@@ -114,13 +219,11 @@ export async function processPhoto(
   date: DateParts,
   source: 'auto' | 'manual',
 ): Promise<ProcessResponse> {
-  const res = await fetch(`${BASE_URL}/process/${photoId}`, {
+  const res = await request(`/process/${photoId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ date, source }),
-    signal: AbortSignal.timeout(30000),
   });
-  await ensureOk(res);
   return (await res.json()) as ProcessResponse;
 }
 
@@ -131,9 +234,6 @@ export function downloadUrl(photoId: string): string {
 
 /** GET /photos — list the user's processed photos. */
 export async function listPhotos(): Promise<PhotoListResponse> {
-  const res = await fetch(`${BASE_URL}/photos`, {
-    signal: AbortSignal.timeout(15000),
-  });
-  await ensureOk(res);
+  const res = await request('/photos', { timeoutMs: 15_000 });
   return (await res.json()) as PhotoListResponse;
 }
