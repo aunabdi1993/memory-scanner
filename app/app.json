@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "Memories Scanner",
+    "slug": "memories-scanner",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "memories-scanner",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": false,
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0F0E0C"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.memoriesscanner.app",
+      "usesAppleSignIn": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Memories Scanner uses the camera to scan your printed photos.",
+        "NSPhotoLibraryUsageDescription": "Memories Scanner reads your photo library so you can pick existing scans.",
+        "NSPhotoLibraryAddUsageDescription": "Memories Scanner saves the dated photos back to your library.",
+        "NSMicrophoneUsageDescription": "Microphone access is not used; this prompt appears only because the camera module declares it."
+      }
+    },
+    "android": {
+      "package": "com.memoriesscanner.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0F0E0C"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Memories Scanner uses the camera to scan your printed photos."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Memories Scanner reads your photo library so you can pick existing scans."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Memories Scanner reads your photo library to save your dated photos.",
+          "savePhotosPermission": "Memories Scanner saves the dated photos back to your library.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ],
+      "expo-apple-authentication",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
