@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import * as FileSystem from 'expo-file-system';
+import { File } from 'expo-file-system';
 
 import { useOnline } from '../components/OfflineBanner';
 import { Colors, Fonts, Radii, Spacing } from '../constants/theme';
@@ -64,8 +64,8 @@ export default function ScanScreen() {
 
   const confirmLargeUpload = async (uri: string): Promise<boolean> => {
     try {
-      const info = await FileSystem.getInfoAsync(uri, { size: true });
-      const size = info.exists && 'size' in info ? info.size ?? 0 : 0;
+      const file = new File(uri);
+      const size = file.exists ? file.size : 0;
       if (!isLargeUpload(size)) return true;
     } catch {
       return true; // if we can't stat, don't block the user
