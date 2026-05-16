@@ -97,12 +97,33 @@ interface RequestOptions extends Omit<RequestInit, 'signal'> {
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 1_000;
 
+/**
+ * Set by AuthContext on mount: returns the current session token (or
+ * null if signed out). We avoid a hard import to dodge a circular
+ * dependency between api.ts and auth.ts.
+ */
+let sessionTokenProvider: (() => Promise<string | null>) | null = null;
+
+export function setSessionTokenProvider(
+  fn: (() => Promise<string | null>) | null,
+): void {
+  sessionTokenProvider = fn;
+}
+
 async function attempt(path: string, opts: RequestOptions): Promise<Response> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, ...init } = opts;
+  const headers = new Headers(init.headers as HeadersInit | undefined);
+  if (sessionTokenProvider) {
+    const token = await sessionTokenProvider();
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+  }
   let res: Response;
   try {
     res = await fetch(`${BASE_URL}${path}`, {
       ...init,
+      headers,
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {
@@ -187,13 +208,15 @@ export async function scanPhoto(uri: string): Promise<ScanResponse> {
  * Uses XMLHttpRequest because fetch doesn't expose upload progress in
  * React Native. Used by the scan screen's progress bar (PR 13).
  */
-export function scanPhotoWithProgress(
+export async function scanPhotoWithProgress(
   uri: string,
   onProgress?: (fraction: number) => void,
 ): Promise<ScanResponse> {
+  const token = sessionTokenProvider ? await sessionTokenProvider() : null;
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${BASE_URL}/scan`);
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.timeout = DEFAULT_TIMEOUT_MS;
 
     xhr.upload.onprogress = (ev) => {

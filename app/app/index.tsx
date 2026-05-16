@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useOnline } from '../components/OfflineBanner';
 import { Colors, Fonts, Radii, Spacing } from '../constants/theme';
+import { useAuth } from '../contexts/AuthContext';
 import { connectivityCheck } from '../services/api';
 
 type ServerStatus = 'checking' | 'ok' | 'unreachable';
@@ -42,6 +43,7 @@ function FilmHoles() {
 export default function HomeScreen() {
   const router = useRouter();
   const online = useOnline();
+  const { user, signOut } = useAuth();
   const [status, setStatus] = useState<ServerStatus>('checking');
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(20)).current;
@@ -138,6 +140,22 @@ export default function HomeScreen() {
           >
             <Text style={styles.secondaryText}>Open library →</Text>
           </Pressable>
+
+          <View style={styles.identityRow}>
+            <Text style={styles.identityText} numberOfLines={1}>
+              Signed in as {user?.email ?? 'private relay'}
+            </Text>
+            <Pressable
+              onPress={() => {
+                signOut().then(() => router.replace('/login'));
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Sign out"
+              hitSlop={8}
+            >
+              <Text style={styles.signOutLink}>Sign out</Text>
+            </Pressable>
+          </View>
         </View>
 
         <FilmHoles />
@@ -244,5 +262,28 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     fontFamily: Fonts.ui,
     fontSize: 14,
+  },
+  identityRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: Spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.border,
+    marginTop: Spacing.sm,
+  },
+  identityText: {
+    color: Colors.textSubtle,
+    fontFamily: Fonts.mono,
+    fontSize: 11,
+    letterSpacing: 1,
+    flex: 1,
+    marginRight: Spacing.sm,
+  },
+  signOutLink: {
+    color: Colors.amber,
+    fontFamily: Fonts.ui,
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
