@@ -13,8 +13,15 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import * as FileSystem from 'expo-file-system';
+
+import { useOnline } from '../components/OfflineBanner';
 import { Colors, Fonts, Radii, Spacing } from '../constants/theme';
-import { ApiError, scanPhotoWithProgress } from '../services/api';
+import {
+  ApiError,
+  isLargeUpload,
+  scanPhotoWithProgress,
+} from '../services/api';
 
 const VIEWFINDER_RATIO = 0.85;
 
@@ -53,8 +60,34 @@ export default function ScanScreen() {
   const cameraRef = useRef<CameraView>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const online = useOnline();
+
+  const confirmLargeUpload = async (uri: string): Promise<boolean> => {
+    try {
+      const info = await FileSystem.getInfoAsync(uri, { size: true });
+      const size = info.exists && 'size' in info ? info.size ?? 0 : 0;
+      if (!isLargeUpload(size)) return true;
+    } catch {
+      return true; // if we can't stat, don't block the user
+    }
+    return new Promise<boolean>((resolve) => {
+      Alert.alert(
+        'Large photo',
+        'This file is over 15 MB and may take a while to upload. Continue?',
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Upload', onPress: () => resolve(true) },
+        ],
+      );
+    });
+  };
 
   const dispatchScan = async (uri: string) => {
+    if (!online) {
+      Alert.alert('Offline', 'Reconnect to upload this scan.');
+      return;
+    }
+    if (!(await confirmLargeUpload(uri))) return;
     setAnalyzing(true);
     setProgress(0);
     try {

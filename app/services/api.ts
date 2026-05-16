@@ -94,7 +94,10 @@ interface RequestOptions extends Omit<RequestInit, 'signal'> {
   timeoutMs?: number;
 }
 
-async function request(path: string, opts: RequestOptions = {}): Promise<Response> {
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 1_000;
+
+async function attempt(path: string, opts: RequestOptions): Promise<Response> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, ...init } = opts;
   let res: Response;
   try {
@@ -120,6 +123,23 @@ async function request(path: string, opts: RequestOptions = {}): Promise<Respons
     throw new HttpError(res.status, detail);
   }
   return res;
+}
+
+async function request(path: string, opts: RequestOptions = {}): Promise<Response> {
+  let lastErr: unknown;
+  for (let i = 0; i <= MAX_RETRIES; i++) {
+    try {
+      return await attempt(path, opts);
+    } catch (e) {
+      lastErr = e;
+      // Skip retry on 4xx — the request itself is wrong, not the network.
+      if (e instanceof HttpError && e.status >= 400 && e.status < 500) throw e;
+      if (i < MAX_RETRIES) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (i + 1)));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 /* ------------------------------------------------------------------ */
@@ -236,4 +256,12 @@ export function downloadUrl(photoId: string): string {
 export async function listPhotos(): Promise<PhotoListResponse> {
   const res = await request('/photos', { timeoutMs: 15_000 });
   return (await res.json()) as PhotoListResponse;
+}
+
+/** Warn callers when a file is over the practical upload size. */
+export const LARGE_UPLOAD_BYTES = 15 * 1024 * 1024;
+
+/** Helper: returns true if a file size in bytes exceeds the warning threshold. */
+export function isLargeUpload(sizeBytes: number): boolean {
+  return sizeBytes > LARGE_UPLOAD_BYTES;
 }

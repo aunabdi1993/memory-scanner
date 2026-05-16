@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useOnline } from '../components/OfflineBanner';
 import { Colors, Fonts, Radii, Spacing } from '../constants/theme';
 import { connectivityCheck } from '../services/api';
 
@@ -40,6 +41,7 @@ function FilmHoles() {
 
 export default function HomeScreen() {
   const router = useRouter();
+  const online = useOnline();
   const [status, setStatus] = useState<ServerStatus>('checking');
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(20)).current;
@@ -112,19 +114,26 @@ export default function HomeScreen() {
         <View style={styles.actions}>
           <Pressable
             onPress={onScan}
+            disabled={!online}
             accessibilityRole="button"
             accessibilityLabel="Scan a photo"
+            accessibilityState={{ disabled: !online }}
             style={({ pressed }) => [
               styles.primary,
+              !online && styles.primaryDisabled,
               pressed && styles.primaryPressed,
             ]}
           >
-            <Text style={styles.primaryText}>Scan a photo</Text>
+            <Text style={styles.primaryText}>
+              {online ? 'Scan a photo' : 'Offline'}
+            </Text>
           </Pressable>
           <Pressable
             onPress={onLibrary}
+            disabled={!online}
             accessibilityRole="button"
             accessibilityLabel="Open library"
+            accessibilityState={{ disabled: !online }}
             style={styles.secondary}
           >
             <Text style={styles.secondaryText}>Open library →</Text>
@@ -218,6 +227,7 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   primaryPressed: { backgroundColor: Colors.amberDeep },
+  primaryDisabled: { backgroundColor: Colors.divider },
   primaryText: {
     color: Colors.bg,
     fontFamily: Fonts.ui,
