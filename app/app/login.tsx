@@ -31,15 +31,16 @@ export default function LoginScreen() {
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <View style={styles.root}>
         <View style={styles.body}>
-          <Text style={styles.eyebrow}>SECURE BY DESIGN</Text>
+          <Text style={styles.eyebrow}>SCAN. DATE. RESTORE.</Text>
           <Text style={styles.title}>
-            Your memories,{'\n'}
-            <Text style={styles.titleAccent}>protected.</Text>
+            Old prints,{'\n'}
+            <Text style={styles.titleAccent}>time-stamped.</Text>
           </Text>
           <View style={styles.divider} />
           <Text style={styles.subtitle}>
-            Sign in with Apple. We never see or store passwords — Apple
-            handles authentication on your device.
+            Point your camera at any printed photo. We read the date off
+            the print, write it into the file's metadata, and save it back
+            to Photos, iCloud, or Drive.
           </Text>
         </View>
 
