@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "scheme": "memories-scanner",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "splash": {
       "resizeMode": "contain",
       "backgroundColor": "#0F0E0C"

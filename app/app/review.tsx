@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
@@ -89,11 +89,11 @@ export default function ReviewScreen() {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await processPhoto(photoId, valid, dirty ? 'manual' : 'auto');
 
-      const target = `${FileSystem.cacheDirectory}${photoId}_final.jpg`;
-      const { uri: localUri } = await FileSystem.downloadAsync(
-        downloadUrl(photoId),
-        target,
-      );
+      const target = new File(Paths.cache, `${photoId}_final.jpg`);
+      await File.downloadFileAsync(downloadUrl(photoId), target, {
+        idempotent: true,
+      });
+      const localUri = target.uri;
 
       Alert.alert('Photo dated', 'Where would you like to save it?', [
         { text: 'Cancel', style: 'cancel' },

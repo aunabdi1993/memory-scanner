@@ -1,5 +1,5 @@
 import { format } from 'date-fns';
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
@@ -138,9 +138,11 @@ export default function LibraryScreen() {
   };
 
   const downloadToCache = async (p: PhotoSummary): Promise<string> => {
-    const target = `${FileSystem.cacheDirectory}${p.filename}`;
-    const { uri } = await FileSystem.downloadAsync(downloadUrl(p.photo_id), target);
-    return uri;
+    const target = new File(Paths.cache, p.filename);
+    await File.downloadFileAsync(downloadUrl(p.photo_id), target, {
+      idempotent: true,
+    });
+    return target.uri;
   };
 
   const onSave = async (p: PhotoSummary) => {
