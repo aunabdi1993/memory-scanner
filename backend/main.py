@@ -34,8 +34,10 @@ from auth import (
 )
 from config import get_settings
 from exif_writer import embed_date_in_exif, safe_target_path
+from middleware import RequestIdMiddleware
 from models import Photo, User
 from ocr import detect_date_in_image
+from observability import init_logging, init_sentry
 from schemas import (
     AppleTokenIn,
     AuthOut,
@@ -52,11 +54,8 @@ from schemas import (
 load_dotenv()
 settings = get_settings()
 
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=LOG_LEVEL,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+init_logging()
+init_sentry(settings.sentry_dsn, settings.env)
 logger = logging.getLogger("memories-scanner")
 
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "uploads")).resolve()
@@ -89,6 +88,7 @@ limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

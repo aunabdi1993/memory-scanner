@@ -29,6 +29,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from db import SessionLocal
+from middleware import user_id_var
 from models import User
 
 logger = logging.getLogger(__name__)
@@ -214,4 +215,5 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
+    user_id_var.set(user.id)
     return user

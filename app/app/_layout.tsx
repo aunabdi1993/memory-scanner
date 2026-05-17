@@ -8,6 +8,9 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 import { OfflineBanner } from '../components/OfflineBanner';
 import { Colors } from '../constants/theme';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
+import { initSentry } from '../services/sentry';
+
+initSentry();
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
