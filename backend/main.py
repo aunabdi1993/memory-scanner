@@ -16,6 +16,7 @@ from typing import AsyncIterator
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -100,6 +101,10 @@ limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+if settings.env == "production" and settings.trusted_hosts:
+    app.add_middleware(
+        TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

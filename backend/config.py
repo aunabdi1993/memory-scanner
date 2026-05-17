@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     allowed_origins: str = "*"
     max_upload_bytes: int = Field(default=15 * 1024 * 1024, ge=1)
 
+    # Comma-separated Host: header allowlist. Empty disables
+    # TrustedHostMiddleware (dev / testing).
+    trusted_hosts_raw: str = Field(default="", alias="TRUSTED_HOSTS")
+
     sentry_dsn: str = ""
 
     @field_validator("session_secret")
@@ -54,6 +58,10 @@ class Settings(BaseSettings):
         if raw == "*":
             return ["*"]
         return [o.strip() for o in raw.split(",") if o.strip()]
+
+    @property
+    def trusted_hosts(self) -> List[str]:
+        return [h.strip() for h in self.trusted_hosts_raw.split(",") if h.strip()]
 
 
 _cached: Settings | None = None
