@@ -52,9 +52,13 @@ def test_tampered_session_token_rejected():
     from auth import issue_session_token, verify_session_token
 
     good = issue_session_token("user-x")
-    # Flip one character in the signature segment.
+    # Replace the first signature character with a guaranteed-different
+    # b64url char. Using a fixed letter like "x" silently flakes on the
+    # ~1.5% of runs where the real signature already starts with that
+    # character, producing a tamper that's actually a no-op.
     head, body, sig = good.split(".")
-    bad = ".".join([head, body, "x" + sig[1:]])
+    bad_first = "a" if sig[0] != "a" else "b"
+    bad = ".".join([head, body, bad_first + sig[1:]])
     with pytest.raises(HTTPException) as exc:
         verify_session_token(bad)
     assert exc.value.status_code == 401
