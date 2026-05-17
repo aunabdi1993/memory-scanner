@@ -9,9 +9,9 @@ import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date as date_type, datetime, timezone
 from pathlib import Path
-from typing import AsyncIterator, Literal
+from typing import AsyncIterator
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
@@ -33,7 +33,6 @@ from auth import (
     issue_session_token,
     verify_apple_token,
 )
-
 from billing import (
     AppleVerificationError,
     FREE_SCAN_LIMIT,
@@ -44,10 +43,22 @@ from billing import (
     record_scan,
     verify_apple_jws,
 )
-
+from config import get_settings
 from exif_writer import embed_date_in_exif, safe_target_path
-from models import User
+from models import Photo, Subscription, User
 from ocr import detect_date_in_image
+from schemas import (
+    AppleTokenIn,
+    AuthOut,
+    DateInput,
+    HealthOut,
+    PhotoListOut,
+    PhotoOut,
+    ProcessOut,
+    ProcessRequest,
+    ScanOut,
+    UserOut,
+)
 
 load_dotenv()
 settings = get_settings()
@@ -77,7 +88,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if os.getenv("RUN_MIGRATIONS_ON_START", "true").lower() in ("1", "true", "yes"):
         _run_migrations()
     logger.info("Memories Scanner backend %s starting (env=%s)", VERSION, settings.env)
-    logger.info("Memories Scanner backend %s starting", VERSION)
     logger.info("Uploads dir:   %s", UPLOADS_DIR)
     logger.info("Processed dir: %s", PROCESSED_DIR)
     logger.info("CORS origins:  %s", settings.cors_origins)
@@ -102,21 +112,12 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 app.mount("/processed", StaticFiles(directory=str(PROCESSED_DIR)), name="processed")
 
 
-@app.get("/health")
-def health() -> dict:
-    return {"status": "ok", "version": VERSION}
+@app.get("/health", response_model=HealthOut)
+def health() -> HealthOut:
+    return HealthOut(status="ok", version=VERSION)
 
 
 # ---------------------------------------------------------------- auth #
-
-
-class AppleTokenIn(BaseModel):
-    identity_token: str
-
-
-class AuthOut(BaseModel):
-    session_token: str
-    user: dict
 
 
 @app.post("/auth/apple", response_model=AuthOut)
@@ -142,13 +143,13 @@ def auth_apple(
     session_token = issue_session_token(user_id)
     return AuthOut(
         session_token=session_token,
-        user={"id": user.id, "email": user.email},
+        user=UserOut(id=user.id, email=user.email),
     )
 
 
-@app.get("/auth/me")
-def auth_me(user: User = Depends(get_current_user)) -> dict:
-    return {"id": user.id, "email": user.email}
+@app.get("/auth/me", response_model=UserOut)
+def auth_me(user: User = Depends(get_current_user)) -> UserOut:
+    return UserOut(id=user.id, email=user.email)
 
 
 # ---------------------------------------------------------------- photos #
@@ -170,12 +171,7 @@ def _user_processed(user_id: str) -> Path:
 
 
 def _validate_photo_id(photo_id: str) -> str:
-    """Reject anything that isn't a UUIDv4 hex string.
-
-    Both /process/{id} and /download/{id} feed photo_id into a filesystem
-    path. Without this check, a value like '../other-user/secret' would
-    happily traverse outside the caller's namespace.
-    """
+    """Reject anything that isn't a UUIDv4 hex string."""
     try:
         uuid.UUID(photo_id, version=4)
     except (ValueError, AttributeError):
@@ -183,15 +179,29 @@ def _validate_photo_id(photo_id: str) -> str:
     return photo_id
 
 
-@app.post("/scan")
+def _photo_to_out(p: Photo) -> PhotoOut:
+    return PhotoOut(
+        photo_id=p.id,
+        filename=f"{p.id}_final.jpg",
+        size_kb=round(p.size_bytes / 1024, 1),
+        size_bytes=p.size_bytes,
+        ocr_confidence=p.ocr_confidence,
+        ocr_detected_date=p.ocr_detected_date,
+        processed_at=p.processed_at,
+        exif_embedded=p.exif_embedded,
+        created_at=p.created_at,
+    )
+
+
+@app.post("/scan", response_model=ScanOut)
 @limiter.limit("10/minute")
 async def scan(
     request: Request,
     photo: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> dict:
-    """Save an uploaded photo, run OCR, and return the detected date.
+) -> ScanOut:
+    """Save an uploaded photo, run OCR, return the detected date.
 
     Free-tier users get ``FREE_SCAN_LIMIT`` scans total; exceeding it
     returns 402 with a structured body the app uses to pop the paywall.
@@ -207,6 +217,7 @@ async def scan(
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > settings.max_upload_bytes:
         raise HTTPException(status_code=413, detail="upload too large")
+
     # Quota check. Wrap in BEGIN IMMEDIATE on SQLite to serialize the
     # read-then-write against concurrent /scan calls. On Postgres, the
     # row-level lock on the User row achieves the same.
@@ -245,35 +256,48 @@ async def scan(
     logger.info("Saved upload %s (%d bytes)", target, target.stat().st_size)
 
     result = detect_date_in_image(str(target))
+    detected_date: date_type | None = None
+    if result.date is not None:
+        detected_date = date_type(
+            result.date["year"], result.date["month"], result.date["day"]
+        )
 
-    # Count the call: compute was spent regardless of OCR success.
+    db.add(
+        Photo(
+            id=photo_id,
+            user_id=fresh_user.id,
+            original_filename=photo.filename,
+            size_bytes=target.stat().st_size,
+            ocr_detected_date=detected_date,
+            ocr_confidence=result.confidence,
+        )
+    )
     record_scan(db, fresh_user, photo_id=photo_id, counted=True)
     db.commit()
 
-    return {"photo_id": photo_id, **result.to_dict()}
+    return ScanOut(
+        photo_id=photo_id,
+        detected=result.detected,
+        date=DateInput(**result.date) if result.date else None,
+        confidence=result.confidence,
+    )
 
 
-class DateInput(BaseModel):
-    year: int = Field(..., ge=1950, le=2030)
-    month: int = Field(..., ge=1, le=12)
-    day: int = Field(..., ge=1, le=31)
-
-
-class ProcessRequest(BaseModel):
-    date: DateInput
-    source: Literal["auto", "manual"] = "auto"
-
-
-@app.post("/process/{photo_id}")
+@app.post("/process/{photo_id}", response_model=ProcessOut)
 @limiter.limit("30/minute")
 def process(
     request: Request,
     photo_id: str,
     body: ProcessRequest,
     user: User = Depends(get_current_user),
-) -> dict:
+    db: Session = Depends(get_db),
+) -> ProcessOut:
     """Embed *body.date* into the upload's EXIF and write the final JPEG."""
     photo_id = _validate_photo_id(photo_id)
+    photo_row = db.get(Photo, photo_id)
+    if photo_row is None or photo_row.user_id != user.id:
+        raise HTTPException(status_code=404, detail="photo not found")
+
     src = _user_uploads(user.id) / f"{photo_id}.jpg"
     if not src.exists():
         raise HTTPException(status_code=404, detail="upload not found")
@@ -287,11 +311,16 @@ def process(
         day=body.date.day,
         source=body.source,
     )
-    return {
-        "photo_id": photo_id,
-        "processed_path": f"/processed/{user.id}/{target.name}",
-        "exif_embedded": embedded,
-    }
+
+    photo_row.processed_at = datetime.now(timezone.utc)
+    photo_row.exif_embedded = embedded
+    db.commit()
+
+    return ProcessOut(
+        photo_id=photo_id,
+        processed_path=f"/processed/{user.id}/{target.name}",
+        exif_embedded=embedded,
+    )
 
 
 @app.get("/download/{photo_id}")
@@ -311,24 +340,57 @@ def download(
     )
 
 
-@app.get("/photos")
-def list_photos(user: User = Depends(get_current_user)) -> dict:
+@app.get("/photos", response_model=PhotoListOut)
+def list_photos(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PhotoListOut:
     """List the caller's processed photos, newest first."""
-    items = []
-    for f in _user_processed(user.id).glob("*_final.jpg"):
-        stat = f.stat()
-        items.append(
-            {
-                "photo_id": f.stem.removesuffix("_final"),
-                "filename": f.name,
-                "size_kb": round(stat.st_size / 1024, 1),
-                "processed_at": datetime.fromtimestamp(
-                    stat.st_mtime, tz=timezone.utc
-                ).isoformat(),
-            }
-        )
-    items.sort(key=lambda x: x["processed_at"], reverse=True)
-    return {"photos": items, "count": len(items)}
+    rows = (
+        db.query(Photo)
+        .filter(Photo.user_id == user.id)
+        .order_by(Photo.created_at.desc())
+        .all()
+    )
+    items = [_photo_to_out(p) for p in rows]
+    return PhotoListOut(photos=items, count=len(items))
+
+
+@app.get("/photos/{photo_id}", response_model=PhotoOut)
+def get_photo(
+    photo_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PhotoOut:
+    photo_id = _validate_photo_id(photo_id)
+    p = db.get(Photo, photo_id)
+    if p is None or p.user_id != user.id:
+        raise HTTPException(status_code=404, detail="photo not found")
+    return _photo_to_out(p)
+
+
+@app.delete("/photos/{photo_id}", status_code=204)
+def delete_photo(
+    photo_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Remove a photo: DB row + upload + processed file. Idempotent."""
+    photo_id = _validate_photo_id(photo_id)
+    p = db.get(Photo, photo_id)
+    if p is None or p.user_id != user.id:
+        raise HTTPException(status_code=404, detail="photo not found")
+
+    upload = _user_uploads(user.id) / f"{photo_id}.jpg"
+    processed = safe_target_path(_user_processed(user.id), photo_id)
+    for f in (upload, processed):
+        try:
+            f.unlink(missing_ok=True)
+        except OSError:
+            logger.exception("Failed to unlink %s during delete", f)
+
+    db.delete(p)
+    db.commit()
 
 
 # ---------------------------------------------------------------- billing #
@@ -362,8 +424,6 @@ def verify_receipt(
     except AppleVerificationError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    # Cross-check via App Store Server API when keys are configured.
-    # Falls back to the client-provided claims when not.
     fresh = fetch_transaction(
         claims.get("transactionId", ""),
         environment=str(claims.get("environment", "Sandbox")),
@@ -398,8 +458,6 @@ async def apple_notifications(
     data = notif.get("data") or {}
     signed_tx = data.get("signedTransactionInfo")
     if not signed_tx:
-        # Some notification types (e.g. CONSUMPTION_REQUEST) carry no
-        # transaction body; we acknowledge but no-op.
         logger.info("Apple notification %s with no transaction body", notif_type)
         return {"ok": True}
     try:
@@ -413,19 +471,12 @@ async def apple_notifications(
     if not original_id:
         raise HTTPException(status_code=400, detail="missing originalTransactionId")
 
-    # Resolve the user via the existing Subscription row (the only
-    # binding back to a User we trust for unauth'd webhooks).
-    from models import Subscription
-
     sub = (
         db.query(Subscription)
         .filter(Subscription.original_transaction_id == original_id)
         .one_or_none()
     )
     if sub is None:
-        # First time we see this original_transaction_id without an
-        # active /billing/verify-receipt call. Drop quietly; user's app
-        # will replay verification on next open.
         logger.info(
             "Apple notification for unknown original_transaction_id %s; dropping",
             original_id,

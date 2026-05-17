@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -42,31 +44,48 @@ class User(Base):
         DateTime(timezone=True), default=_utcnow
     )
 
-    # Lifetime count of billable scans (HTTP 200 from /scan). Failed
-    # uploads / pre-OCR exceptions never reach record_scan, so they
-    # don't count.
     lifetime_scans: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False, server_default="0"
     )
-
-    # free | active | grace | expired | refunded
     subscription_status: Mapped[str] = mapped_column(
         String(16), default="free", nullable=False, server_default="free"
     )
     subscription_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # Apple's stable subscription identifier; survives renewals and
-    # device migrations. Null until first successful purchase.
     apple_original_transaction_id: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True
     )
-
-    # True if the user owns the non-consumable lifetime IAP. Independent
-    # of subscription_status: a lifetime owner who also held a monthly
-    # sub keeps both fields set.
     has_lifetime: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="0"
+    )
+
+
+class Photo(Base):
+    """One row per scanned photo (uploaded JPEG + OCR result + EXIF status).
+
+    ``id`` is a UUIDv4 hex string generated when the upload lands in
+    /scan; the on-disk path is ``UPLOADS_DIR/{user_id}/{id}.jpg``.
+    """
+
+    __tablename__ = "photos"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey("users.id"), nullable=False, index=True
+    )
+    original_filename: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    ocr_detected_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    ocr_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    exif_embedded: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
     )
 
 
@@ -114,7 +133,6 @@ class Subscription(Base):
         String(64), nullable=False, unique=True
     )
     product_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    # active | grace | expired | refunded | revoked
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

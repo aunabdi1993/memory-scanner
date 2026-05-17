@@ -40,7 +40,12 @@ export interface PhotoSummary {
   photo_id: string;
   filename: string;
   size_kb: number;
-  processed_at: string;
+  size_bytes: number;
+  ocr_confidence: number | null;
+  ocr_detected_date: string | null;
+  processed_at: string | null;
+  exif_embedded: boolean | null;
+  created_at: string;
 }
 
 export interface PhotoListResponse {
@@ -316,6 +321,17 @@ export function downloadUrl(photoId: string): string {
 export async function listPhotos(): Promise<PhotoListResponse> {
   const res = await request('/photos', { timeoutMs: 15_000 });
   return (await res.json()) as PhotoListResponse;
+}
+
+/** GET /photos/{id} — fetch a single photo's metadata. */
+export async function getPhoto(photoId: string): Promise<PhotoSummary> {
+  const res = await request(`/photos/${photoId}`);
+  return (await res.json()) as PhotoSummary;
+}
+
+/** DELETE /photos/{id} — remove a photo (DB row + upload + processed file). */
+export async function deletePhoto(photoId: string): Promise<void> {
+  await request(`/photos/${photoId}`, { method: 'DELETE' });
 }
 
 /** Warn callers when a file is over the practical upload size. */
