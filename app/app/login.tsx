@@ -39,8 +39,8 @@ export default function LoginScreen() {
           <View style={styles.divider} />
           <Text style={styles.subtitle}>
             Point your camera at any printed photo. We read the date off
-            the print, write it into the file's metadata, and save it back
-            to Photos, iCloud, or Drive.
+            the print, write it into the file&apos;s metadata, and save it
+            back to Photos, iCloud, or Drive.
           </Text>
         </View>
 
