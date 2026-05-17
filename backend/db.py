@@ -59,6 +59,7 @@ def _apply_user_billing_columns() -> None:
         ("subscription_status", "VARCHAR(16) NOT NULL DEFAULT 'free'"),
         ("subscription_expires_at", "TIMESTAMP NULL"),
         ("apple_original_transaction_id", "VARCHAR(64) NULL"),
+        ("has_lifetime", "BOOLEAN NOT NULL DEFAULT 0"),
     ]
     with engine.begin() as conn:
         for name, ddl in pending:
