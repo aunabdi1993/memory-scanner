@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useOnline } from '../components/OfflineBanner';
 import { Colors, Fonts, Radii, Spacing } from '../constants/theme';
 import { useAuth } from '../contexts/AuthContext';
+import { useEntitlement } from '../contexts/EntitlementContext';
 import { connectivityCheck } from '../services/api';
 
 type ServerStatus = 'checking' | 'ok' | 'unreachable';
@@ -44,6 +45,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const online = useOnline();
   const { user, signOut } = useAuth();
+  const { isPro, snapshot } = useEntitlement();
   const [status, setStatus] = useState<ServerStatus>('checking');
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(20)).current;
@@ -140,6 +142,21 @@ export default function HomeScreen() {
           >
             <Text style={styles.secondaryText}>Open library →</Text>
           </Pressable>
+
+          {snapshot ? (
+            <Pressable
+              onPress={() => router.push('/paywall')}
+              accessibilityRole="button"
+              accessibilityLabel={isPro ? 'Manage subscription' : 'Upgrade to Pro'}
+              style={styles.upgradeChip}
+            >
+              <Text style={styles.upgradeChipText}>
+                {isPro
+                  ? 'PRO · Unlimited scans'
+                  : `${Math.max(snapshot.scans_remaining, 0)} of ${snapshot.free_limit} free scans left · Upgrade`}
+              </Text>
+            </Pressable>
+          ) : null}
 
           <View style={styles.identityRow}>
             <Text style={styles.identityText} numberOfLines={1}>
@@ -262,6 +279,23 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     fontFamily: Fonts.ui,
     fontSize: 14,
+  },
+  upgradeChip: {
+    alignSelf: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    borderRadius: Radii.pill,
+    borderWidth: 1,
+    borderColor: Colors.amber,
+    minHeight: 36,
+    justifyContent: 'center',
+    marginTop: Spacing.xs,
+  },
+  upgradeChipText: {
+    color: Colors.amber,
+    fontFamily: Fonts.mono,
+    fontSize: 11,
+    letterSpacing: 1,
   },
   identityRow: {
     flexDirection: 'row',

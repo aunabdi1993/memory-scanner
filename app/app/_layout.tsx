@@ -8,6 +8,7 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 import { OfflineBanner } from '../components/OfflineBanner';
 import { Colors } from '../constants/theme';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
+import { EntitlementProvider } from '../contexts/EntitlementContext';
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -44,24 +45,30 @@ export default function RootLayout() {
       <StatusBar style="light" />
       <ErrorBoundary>
         <AuthProvider>
-          <View style={{ flex: 1 }}>
-            <OfflineBanner />
-            <AuthGate>
-              <Stack
-                screenOptions={{
-                  headerShown: false,
-                  contentStyle: { backgroundColor: Colors.bg },
-                  animation: 'fade',
-                }}
-              >
-                <Stack.Screen name="index" />
-                <Stack.Screen name="scan" options={{ presentation: 'modal' }} />
-                <Stack.Screen name="review" options={{ presentation: 'card' }} />
-                <Stack.Screen name="library" />
-                <Stack.Screen name="login" />
-              </Stack>
-            </AuthGate>
-          </View>
+          <EntitlementProvider>
+            <View style={{ flex: 1 }}>
+              <OfflineBanner />
+              <AuthGate>
+                <Stack
+                  screenOptions={{
+                    headerShown: false,
+                    contentStyle: { backgroundColor: Colors.bg },
+                    animation: 'fade',
+                  }}
+                >
+                  <Stack.Screen name="index" />
+                  <Stack.Screen name="scan" options={{ presentation: 'modal' }} />
+                  <Stack.Screen name="review" options={{ presentation: 'card' }} />
+                  <Stack.Screen name="library" />
+                  <Stack.Screen name="login" />
+                  <Stack.Screen
+                    name="paywall"
+                    options={{ presentation: 'modal' }}
+                  />
+                </Stack>
+              </AuthGate>
+            </View>
+          </EntitlementProvider>
         </AuthProvider>
       </ErrorBoundary>
     </GestureHandlerRootView>

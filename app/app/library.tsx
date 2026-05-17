@@ -184,13 +184,24 @@ export default function LibraryScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <View style={styles.header}>
-        <Pressable
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          style={styles.back}
-        >
-          <Text style={styles.backText}>← Back</Text>
-        </Pressable>
+        <View style={styles.headerTopRow}>
+          <Pressable
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            style={styles.back}
+          >
+            <Text style={styles.backText}>← Back</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => router.push('/paywall')}
+            accessibilityRole="button"
+            accessibilityLabel="Manage subscription or restore purchases"
+            hitSlop={8}
+            style={styles.manageBtn}
+          >
+            <Text style={styles.manageBtnText}>Manage / Restore</Text>
+          </Pressable>
+        </View>
         <Text style={styles.title}>Library</Text>
         <Text style={styles.count}>
           {items.length} {items.length === 1 ? 'scan' : 'scans'}
@@ -236,8 +247,20 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.md,
     paddingBottom: Spacing.lg,
   },
+  headerTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   back: { minHeight: 44, justifyContent: 'center' },
   backText: { color: Colors.textMuted, fontFamily: Fonts.ui, fontSize: 14 },
+  manageBtn: { minHeight: 44, justifyContent: 'center' },
+  manageBtnText: {
+    color: Colors.amber,
+    fontFamily: Fonts.mono,
+    fontSize: 11,
+    letterSpacing: 1,
+  },
   title: {
     color: Colors.text,
     fontFamily: Fonts.display,

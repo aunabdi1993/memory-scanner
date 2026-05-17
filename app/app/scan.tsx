@@ -17,8 +17,10 @@ import { File } from 'expo-file-system';
 
 import { useOnline } from '../components/OfflineBanner';
 import { Colors, Fonts, Radii, Spacing } from '../constants/theme';
+import { useEntitlement } from '../contexts/EntitlementContext';
 import {
   ApiError,
+  QuotaExhaustedError,
   isLargeUpload,
   scanPhotoWithProgress,
 } from '../services/api';
@@ -61,6 +63,7 @@ export default function ScanScreen() {
   const [analyzing, setAnalyzing] = useState(false);
   const [progress, setProgress] = useState(0);
   const online = useOnline();
+  const { isPro, scansRemaining, refresh } = useEntitlement();
 
   const confirmLargeUpload = async (uri: string): Promise<boolean> => {
     try {
@@ -87,11 +90,21 @@ export default function ScanScreen() {
       Alert.alert('Offline', 'Reconnect to upload this scan.');
       return;
     }
+    // Pre-flight quota check using the cached snapshot. The server is
+    // the source of truth — if this client cache is stale we still get
+    // a 402 below.
+    if (!isPro && scansRemaining <= 0) {
+      router.push('/paywall');
+      return;
+    }
     if (!(await confirmLargeUpload(uri))) return;
     setAnalyzing(true);
     setProgress(0);
     try {
       const result = await scanPhotoWithProgress(uri, setProgress);
+      // The scan just consumed one of the free quota (or was free for
+      // Pro). Refresh in the background so the indicator stays accurate.
+      void refresh();
       router.replace({
         pathname: '/review',
         params: {
@@ -105,6 +118,11 @@ export default function ScanScreen() {
         },
       });
     } catch (e) {
+      if (e instanceof QuotaExhaustedError) {
+        void refresh();
+        router.replace('/paywall');
+        return;
+      }
       const msg = e instanceof ApiError ? e.message : 'Scan failed';
       Alert.alert('Scan failed', msg);
     } finally {
@@ -209,6 +227,14 @@ export default function ScanScreen() {
             <Text style={[styles.iconText, { color: 'transparent' }]}>·</Text>
           </View>
         </View>
+
+        {!isPro && Number.isFinite(scansRemaining) ? (
+          <Text style={styles.quotaBadge}>
+            {scansRemaining > 0
+              ? `${scansRemaining} free scan${scansRemaining === 1 ? '' : 's'} left`
+              : 'Free quota used — upgrade to keep scanning'}
+          </Text>
+        ) : null}
 
         {analyzing ? (
           <View style={styles.progressTrack}>
@@ -336,6 +362,15 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   progressFill: { height: 3, backgroundColor: Colors.amber },
+  quotaBadge: {
+    color: Colors.amber,
+    fontFamily: Fonts.mono,
+    fontSize: 11,
+    letterSpacing: 1.5,
+    textAlign: 'center',
+    marginBottom: Spacing.sm,
+    paddingHorizontal: Spacing.xl,
+  },
   tip: {
     color: Colors.textSubtle,
     fontFamily: Fonts.ui,

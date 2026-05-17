@@ -84,6 +84,22 @@ export class HttpError extends ApiError {
   }
 }
 
+/**
+ * 402 from /scan when the free tier is exhausted. Carries the parsed
+ * detail so the scan screen can route straight to the paywall with
+ * accurate "X of Y scans used" copy.
+ */
+export class QuotaExhaustedError extends HttpError {
+  constructor(
+    public readonly scansUsed: number,
+    public readonly limit: number,
+    public readonly productId: string,
+  ) {
+    super(402, `Free quota exhausted (${scansUsed}/${limit})`);
+    this.name = 'QuotaExhaustedError';
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Internals                                                           */
 /* ------------------------------------------------------------------ */
@@ -134,16 +150,37 @@ async function attempt(path: string, opts: RequestOptions): Promise<Response> {
   }
 
   if (!res.ok) {
-    let detail = `${res.status} ${res.statusText}`;
+    let detail: unknown = `${res.status} ${res.statusText}`;
     try {
       const body = await res.json();
-      if (body?.detail) detail = String(body.detail);
+      if (body?.detail !== undefined) detail = body.detail;
     } catch {
       // body wasn't JSON — keep status text.
     }
-    throw new HttpError(res.status, detail);
+    throw buildHttpError(res.status, detail);
   }
   return res;
+}
+
+function buildHttpError(status: number, detail: unknown): HttpError {
+  if (
+    status === 402 &&
+    detail &&
+    typeof detail === 'object' &&
+    (detail as { code?: string }).code === 'quota_exhausted'
+  ) {
+    const d = detail as {
+      scans_used?: number;
+      limit?: number;
+      product_id?: string;
+    };
+    return new QuotaExhaustedError(
+      d.scans_used ?? 0,
+      d.limit ?? 0,
+      d.product_id ?? '',
+    );
+  }
+  return new HttpError(status, typeof detail === 'string' ? detail : JSON.stringify(detail));
 }
 
 async function request(path: string, opts: RequestOptions = {}): Promise<Response> {
@@ -235,14 +272,14 @@ export async function scanPhotoWithProgress(
           reject(new ApiError('Malformed scan response', e));
         }
       } else {
-        let detail = `${xhr.status} ${xhr.statusText}`;
+        let detail: unknown = `${xhr.status} ${xhr.statusText}`;
         try {
           const body = JSON.parse(xhr.responseText);
-          if (body?.detail) detail = String(body.detail);
+          if (body?.detail !== undefined) detail = body.detail;
         } catch {
           // not json
         }
-        reject(new HttpError(xhr.status, detail));
+        reject(buildHttpError(xhr.status, detail));
       }
     };
 
@@ -287,4 +324,43 @@ export const LARGE_UPLOAD_BYTES = 15 * 1024 * 1024;
 /** Helper: returns true if a file size in bytes exceeds the warning threshold. */
 export function isLargeUpload(sizeBytes: number): boolean {
   return sizeBytes > LARGE_UPLOAD_BYTES;
+}
+
+/* ------------------------------------------------------------------ */
+/* Billing                                                             */
+/* ------------------------------------------------------------------ */
+
+export interface EntitlementSnapshot {
+  tier: 'free' | 'pro';
+  scans_used: number;
+  /** -1 indicates unlimited (Pro). Otherwise free-tier remaining. */
+  scans_remaining: number;
+  expires_at: string | null;
+  status: 'free' | 'active' | 'grace' | 'expired' | 'refunded';
+  free_limit: number;
+  product_id: string;
+}
+
+/** GET /billing/status — fetch the user's current entitlement. */
+export async function getBillingStatus(): Promise<EntitlementSnapshot> {
+  const res = await request('/billing/status', { timeoutMs: 10_000 });
+  return (await res.json()) as EntitlementSnapshot;
+}
+
+/**
+ * POST /billing/verify-receipt — hand a StoreKit-signed transaction JWS
+ * to the backend. Returns the freshly-projected entitlement.
+ *
+ * Called once on every successful purchase, and once per JWS during a
+ * Restore-Purchases flow.
+ */
+export async function verifyReceipt(
+  signedTransactionJws: string,
+): Promise<EntitlementSnapshot> {
+  const res = await request('/billing/verify-receipt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ signed_transaction_jws: signedTransactionJws }),
+  });
+  return (await res.json()) as EntitlementSnapshot;
 }
