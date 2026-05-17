@@ -62,6 +62,13 @@ class User(Base):
         String(64), nullable=True, index=True
     )
 
+    # True if the user owns the non-consumable lifetime IAP. Independent
+    # of subscription_status: a lifetime owner who also held a monthly
+    # sub keeps both fields set.
+    has_lifetime: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="0"
+    )
+
 
 class UsageLog(Base):
     """Append-only audit trail of /scan calls.

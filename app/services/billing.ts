@@ -16,15 +16,22 @@ import { Platform } from 'react-native';
 import { verifyReceipt, type EntitlementSnapshot } from './api';
 
 /**
- * Product identifier as configured in App Store Connect. Must match the
- * server-side constant in backend/billing.py.
+ * Product identifiers as configured in App Store Connect. Must match
+ * the server-side constants in backend/billing.py.
+ *
+ * PRO_PRODUCT_ID: auto-renewing monthly subscription.
+ * LIFETIME_PRODUCT_ID: non-consumable one-time purchase.
  */
 export const PRO_PRODUCT_ID = 'com.memoriesscanner.pro.monthly';
+export const LIFETIME_PRODUCT_ID = 'com.memoriesscanner.pro.lifetime';
 
 interface IapModule {
   initConnection: () => Promise<boolean>;
   endConnection: () => Promise<void>;
   getSubscriptions: (skus: { ios?: string[]; android?: string[] }) => Promise<
+    Array<{ id: string; displayPrice?: string; price?: string; currency?: string }>
+  >;
+  getProducts: (skus: { ios?: string[]; android?: string[] }) => Promise<
     Array<{ id: string; displayPrice?: string; price?: string; currency?: string }>
   >;
   requestPurchase: (params: {
@@ -111,17 +118,30 @@ export async function getProProduct(): Promise<ProProduct | null> {
 }
 
 /**
- * Kick off the StoreKit purchase sheet for the monthly subscription.
- * Returns the entitlement snapshot the backend produced after
- * verifying the receipt.
+ * Fetch the non-consumable lifetime IAP. Distinct from the subscription
+ * lookup because Apple separates products from subscriptions in the
+ * StoreKit API surface.
  */
-export async function purchaseMonthly(): Promise<EntitlementSnapshot> {
+export async function getLifetimeProduct(): Promise<ProProduct | null> {
+  const mod = loadIap();
+  if (!mod) return null;
+  await initIAP();
+  const list = await mod.getProducts({ ios: [LIFETIME_PRODUCT_ID] });
+  const match = list.find((p) => p.id === LIFETIME_PRODUCT_ID) ?? list[0];
+  if (!match) return null;
+  return {
+    id: match.id,
+    displayPrice: match.displayPrice ?? match.price ?? '',
+  };
+}
+
+async function runPurchase(sku: string): Promise<EntitlementSnapshot> {
   const mod = loadIap();
   if (!mod) throw new Error('In-app purchase is not available in this build.');
   await initIAP();
   const purchase = (await mod.requestPurchase({
-    sku: PRO_PRODUCT_ID,
-    ios: { sku: PRO_PRODUCT_ID },
+    sku,
+    ios: { sku },
   })) as
     | {
         jwsRepresentationIos?: string;
@@ -137,6 +157,24 @@ export async function purchaseMonthly(): Promise<EntitlementSnapshot> {
     // Non-fatal: the backend already accepted the entitlement.
   }
   return snapshot;
+}
+
+/**
+ * Kick off the StoreKit purchase sheet for the monthly subscription.
+ * Returns the entitlement snapshot the backend produced after
+ * verifying the receipt.
+ */
+export async function purchaseMonthly(): Promise<EntitlementSnapshot> {
+  return runPurchase(PRO_PRODUCT_ID);
+}
+
+/**
+ * Kick off the StoreKit purchase sheet for the non-consumable lifetime
+ * IAP. Same verification path as the subscription — the backend
+ * classifies the entitlement by productId.
+ */
+export async function purchaseLifetime(): Promise<EntitlementSnapshot> {
+  return runPurchase(LIFETIME_PRODUCT_ID);
 }
 
 /**

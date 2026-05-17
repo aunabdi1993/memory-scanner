@@ -336,9 +336,15 @@ export interface EntitlementSnapshot {
   /** -1 indicates unlimited (Pro). Otherwise free-tier remaining. */
   scans_remaining: number;
   expires_at: string | null;
-  status: 'free' | 'active' | 'grace' | 'expired' | 'refunded';
+  /** "lifetime" is set for non-consumable-IAP owners. */
+  status: 'free' | 'active' | 'grace' | 'expired' | 'refunded' | 'lifetime';
   free_limit: number;
+  /** Monthly subscription product identifier. */
   product_id: string;
+  /** Non-consumable lifetime IAP identifier. */
+  lifetime_product_id?: string;
+  /** True if the user owns the lifetime IAP. */
+  has_lifetime?: boolean;
 }
 
 /** GET /billing/status — fetch the user's current entitlement. */

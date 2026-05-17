@@ -472,3 +472,161 @@ def test_apply_transaction_rejects_cross_user_binding(isolated_db):
             )
         assert exc.value.status_code == 409
         assert exc.value.detail["code"] == "already_bound"
+
+
+# --------------------------------------------------------------------- #
+# Lifetime (non-consumable) IAP                                         #
+# --------------------------------------------------------------------- #
+
+
+def test_entitled_lifetime_overrides_free_quota():
+    from billing import entitled
+    from models import User
+
+    # User burnt through every free scan, but owns the lifetime IAP.
+    snap = entitled(
+        User(
+            id="u",
+            lifetime_scans=999,
+            subscription_status="free",
+            has_lifetime=True,
+        )
+    )
+    assert snap.tier == "pro"
+    assert snap.scans_remaining == -1
+    assert snap.status == "lifetime"
+    assert snap.has_lifetime is True
+    assert snap.expires_at is None
+
+
+def test_entitled_snapshot_includes_lifetime_product_id():
+    from billing import LIFETIME_PRODUCT_ID, entitled
+    from models import User
+
+    snap = entitled(User(id="u", lifetime_scans=0, subscription_status="free"))
+    d = snap.to_dict()
+    assert d["lifetime_product_id"] == LIFETIME_PRODUCT_ID
+    assert d["has_lifetime"] is False
+
+
+def test_apply_transaction_lifetime_sets_has_lifetime(isolated_db):
+    import billing
+    from models import Subscription, User
+
+    TestSession = isolated_db
+    _make_user(TestSession, user_id="u-life", lifetime_scans=25)
+    with TestSession() as s:
+        u = s.get(User, "u-life")
+        billing.apply_transaction(
+            s,
+            u,
+            {
+                "originalTransactionId": "L-100",
+                "productId": billing.LIFETIME_PRODUCT_ID,
+                "environment": "Sandbox",
+            },
+        )
+        s.commit()
+        u2 = s.get(User, "u-life")
+        assert u2.has_lifetime is True
+        # Lifetime must NOT touch the subscription projection columns.
+        assert u2.subscription_status == "free"
+        assert u2.subscription_expires_at is None
+
+        snap = billing.entitled(u2)
+        assert snap.tier == "pro"
+        assert snap.scans_remaining == -1
+
+        sub = (
+            s.query(Subscription)
+            .filter(Subscription.original_transaction_id == "L-100")
+            .one()
+        )
+        assert sub.product_id == billing.LIFETIME_PRODUCT_ID
+        assert sub.expires_at is None
+        assert sub.status == "active"
+
+
+def test_apply_transaction_lifetime_refund_clears_flag(isolated_db):
+    import billing
+    from datetime import datetime, timezone
+    from models import Subscription, User
+
+    TestSession = isolated_db
+    _make_user(TestSession, user_id="u-life-r", has_lifetime=True)
+    with TestSession() as s:
+        s.add(
+            Subscription(
+                user_id="u-life-r",
+                original_transaction_id="L-200",
+                product_id=billing.LIFETIME_PRODUCT_ID,
+                status="active",
+                environment="sandbox",
+            )
+        )
+        s.commit()
+
+    with TestSession() as s:
+        u = s.get(User, "u-life-r")
+        revoke_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        billing.apply_transaction(
+            s,
+            u,
+            {
+                "originalTransactionId": "L-200",
+                "productId": billing.LIFETIME_PRODUCT_ID,
+                "revocationDate": revoke_ms,
+            },
+            notification_type="REFUND",
+        )
+        s.commit()
+        u2 = s.get(User, "u-life-r")
+        assert u2.has_lifetime is False
+        assert billing.entitled(u2).tier == "free"
+
+
+def test_apply_transaction_lifetime_independent_of_subscription(isolated_db):
+    """A monthly subscriber buys lifetime — both fields should coexist."""
+    import billing
+    from datetime import datetime, timedelta, timezone
+    from models import Subscription, User
+
+    TestSession = isolated_db
+    future = datetime.now(timezone.utc) + timedelta(days=30)
+    _make_user(
+        TestSession,
+        user_id="u-both",
+        subscription_status="active",
+        subscription_expires_at=future,
+        apple_original_transaction_id="M-300",
+    )
+    with TestSession() as s:
+        s.add(
+            Subscription(
+                user_id="u-both",
+                original_transaction_id="M-300",
+                product_id=billing.MONTHLY_PRODUCT_ID,
+                status="active",
+                expires_at=future,
+                environment="sandbox",
+            )
+        )
+        s.commit()
+
+    with TestSession() as s:
+        u = s.get(User, "u-both")
+        billing.apply_transaction(
+            s,
+            u,
+            {
+                "originalTransactionId": "L-300",
+                "productId": billing.LIFETIME_PRODUCT_ID,
+                "environment": "Sandbox",
+            },
+        )
+        s.commit()
+        u2 = s.get(User, "u-both")
+        assert u2.has_lifetime is True
+        # Monthly projection columns untouched.
+        assert u2.subscription_status == "active"
+        assert u2.apple_original_transaction_id == "M-300"
