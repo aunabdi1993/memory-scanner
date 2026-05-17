@@ -1,0 +1,20 @@
+services:
+  backend:
+    build: ./backend
+    image: memories-scanner-backend:dev
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      RUN_MIGRATIONS_ON_START: "true"
+      UPLOADS_DIR: /data/uploads
+      PROCESSED_DIR: /data/processed
+      DATABASE_URL: sqlite:////data/memories.db
+    volumes:
+      - backend_data:/data
+    restart: unless-stopped
+
+volumes:
+  backend_data:

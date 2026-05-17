@@ -1,4 +1,4 @@
-.PHONY: install backend app lint test clean migrate migration
+.PHONY: install backend app lint test clean migrate migration docker-build docker-up docker-down
 
 install:
 	cd backend && python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
@@ -23,6 +23,15 @@ migrate:
 # Usage: make migration name="add photos table"
 migration:
 	cd backend && ./venv/bin/alembic revision --autogenerate -m "$(name)"
+
+docker-build:
+	docker compose build
+
+docker-up:
+	docker compose up
+
+docker-down:
+	docker compose down
 
 clean:
 	rm -rf backend/venv backend/uploads backend/processed
