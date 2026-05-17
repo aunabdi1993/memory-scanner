@@ -11,14 +11,14 @@ backend. Sign in with Apple — no passwords stored anywhere.
 
 ```
 backend/   FastAPI service (OCR, EXIF, auth, photo storage)
-app/       Expo SDK 51 app (expo-router, TypeScript)
+app/       Expo SDK 54 app (expo-router, TypeScript)
 docs/      Design notes, screenshots
 ```
 
 ## Quick start
 
 ```bash
-# One-time install (Python venv + npm)
+# One-time install (Tesseract via brew/apt, Python venv, npm)
 make install
 
 # Run the backend (port 8000)
@@ -27,6 +27,10 @@ make backend
 # In another terminal, run the app
 make app
 ```
+
+If `make install` can't install Tesseract automatically (no Homebrew on
+macOS, or no sudo on Linux), install it yourself, then rerun
+`make install` to pick up the Python/Node deps.
 
 For per-package details:
 
