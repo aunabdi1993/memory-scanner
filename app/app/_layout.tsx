@@ -9,6 +9,9 @@ import { OfflineBanner } from '../components/OfflineBanner';
 import { Colors } from '../constants/theme';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { EntitlementProvider } from '../contexts/EntitlementContext';
+import { initSentry } from '../services/sentry';
+
+initSentry();
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
