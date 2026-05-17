@@ -23,6 +23,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from alembic import command
+from alembic.config import Config as AlembicConfig
+
 from auth import (
     get_current_user,
     get_db,
@@ -39,7 +42,6 @@ from billing import (
     record_scan,
     verify_apple_jws,
 )
-from db import init_db
 from exif_writer import embed_date_in_exif, safe_target_path
 from models import User
 from ocr import detect_date_in_image
@@ -61,9 +63,15 @@ PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 VERSION = "1.0.0"
 
 
+def _run_migrations() -> None:
+    cfg = AlembicConfig(str(Path(__file__).parent / "alembic.ini"))
+    command.upgrade(cfg, "head")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    init_db()
+    if os.getenv("RUN_MIGRATIONS_ON_START", "true").lower() in ("1", "true", "yes"):
+        _run_migrations()
     logger.info("Memories Scanner backend %s starting", VERSION)
     logger.info("Uploads dir:   %s", UPLOADS_DIR)
     logger.info("Processed dir: %s", PROCESSED_DIR)

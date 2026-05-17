@@ -8,10 +8,13 @@ embedding, and authenticated user storage.
 ```bash
 ./setup.sh                       # installs tesseract + venv + deps
 source venv/bin/activate
+alembic upgrade head             # apply schema migrations
 uvicorn main:app --reload --port 8000
 ```
 
-Or from repo root: `make install && make backend`.
+Or from repo root: `make install && make migrate && make backend`.
+(`make backend` runs migrations automatically on startup unless
+`RUN_MIGRATIONS_ON_START=false`.)
 
 ## Endpoints
 
@@ -46,6 +49,7 @@ ocr.py              Image preprocessing + Tesseract pipeline
 exif_writer.py      piexif-based EXIF date embedding
 auth.py             Apple JWKS verification + session JWTs
 db.py / models.py   SQLAlchemy engine + User model
+alembic/            Schema migrations (alembic upgrade head)
 tests/              pytest suite
 uploads/            (gitignored) raw uploads, namespaced per user
 processed/          (gitignored) EXIF-embedded results
