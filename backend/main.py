@@ -5,8 +5,6 @@ date stamp, embeds the detected/manual date into EXIF metadata, and
 serves the processed JPEG back to the app.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import uuid
@@ -16,11 +14,14 @@ from pathlib import Path
 from typing import AsyncIterator, Literal
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
 from alembic import command
@@ -32,11 +33,13 @@ from auth import (
     issue_session_token,
     verify_apple_token,
 )
+from config import get_settings
 from exif_writer import embed_date_in_exif, safe_target_path
 from models import User
 from ocr import detect_date_in_image
 
 load_dotenv()
+settings = get_settings()
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -62,24 +65,22 @@ def _run_migrations() -> None:
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if os.getenv("RUN_MIGRATIONS_ON_START", "true").lower() in ("1", "true", "yes"):
         _run_migrations()
-    logger.info("Memories Scanner backend %s starting", VERSION)
+    logger.info("Memories Scanner backend %s starting (env=%s)", VERSION, settings.env)
     logger.info("Uploads dir:   %s", UPLOADS_DIR)
     logger.info("Processed dir: %s", PROCESSED_DIR)
-    logger.info("CORS origins:  %s", allowed_origins)
+    logger.info("CORS origins:  %s", settings.cors_origins)
     yield
 
 
 app = FastAPI(title="Memories Scanner", version=VERSION, lifespan=lifespan)
 
-allowed_origins_raw = os.getenv("ALLOWED_ORIGINS", "*")
-allowed_origins = (
-    ["*"]
-    if allowed_origins_raw.strip() == "*"
-    else [o.strip() for o in allowed_origins_raw.split(",") if o.strip()]
-)
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -107,7 +108,12 @@ class AuthOut(BaseModel):
 
 
 @app.post("/auth/apple", response_model=AuthOut)
-def auth_apple(body: AppleTokenIn, db: Session = Depends(get_db)) -> AuthOut:
+@limiter.limit("5/minute")
+def auth_apple(
+    request: Request,
+    body: AppleTokenIn,
+    db: Session = Depends(get_db),
+) -> AuthOut:
     claims = verify_apple_token(body.identity_token)
     user_id = claims["sub"]
     email = claims.get("email")
@@ -136,7 +142,7 @@ def auth_me(user: User = Depends(get_current_user)) -> dict:
 # ---------------------------------------------------------------- photos #
 
 
-ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/heic"}
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png"}
 
 
 def _user_uploads(user_id: str) -> Path:
@@ -151,8 +157,24 @@ def _user_processed(user_id: str) -> Path:
     return p
 
 
+def _validate_photo_id(photo_id: str) -> str:
+    """Reject anything that isn't a UUIDv4 hex string.
+
+    Both /process/{id} and /download/{id} feed photo_id into a filesystem
+    path. Without this check, a value like '../other-user/secret' would
+    happily traverse outside the caller's namespace.
+    """
+    try:
+        uuid.UUID(photo_id, version=4)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="invalid photo_id")
+    return photo_id
+
+
 @app.post("/scan")
+@limiter.limit("10/minute")
 async def scan(
+    request: Request,
     photo: UploadFile = File(...),
     user: User = Depends(get_current_user),
 ) -> dict:
@@ -163,11 +185,19 @@ async def scan(
             detail=f"Unsupported content-type {photo.content_type!r}",
         )
 
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail="upload too large")
+
     photo_id = uuid.uuid4().hex
     target = _user_uploads(user.id) / f"{photo_id}.jpg"
     try:
         contents = await photo.read()
+        if len(contents) > settings.max_upload_bytes:
+            raise HTTPException(status_code=413, detail="upload too large")
         target.write_bytes(contents)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Failed to save upload")
         raise HTTPException(status_code=500, detail="upload failed") from e
@@ -190,12 +220,15 @@ class ProcessRequest(BaseModel):
 
 
 @app.post("/process/{photo_id}")
+@limiter.limit("30/minute")
 def process(
+    request: Request,
     photo_id: str,
     body: ProcessRequest,
     user: User = Depends(get_current_user),
 ) -> dict:
     """Embed *body.date* into the upload's EXIF and write the final JPEG."""
+    photo_id = _validate_photo_id(photo_id)
     src = _user_uploads(user.id) / f"{photo_id}.jpg"
     if not src.exists():
         raise HTTPException(status_code=404, detail="upload not found")
@@ -222,6 +255,7 @@ def download(
     user: User = Depends(get_current_user),
 ) -> FileResponse:
     """Serve the processed JPEG as an attachment, scoped to the caller."""
+    photo_id = _validate_photo_id(photo_id)
     target = safe_target_path(_user_processed(user.id), photo_id)
     if not target.exists():
         raise HTTPException(status_code=404, detail="processed photo not found")
