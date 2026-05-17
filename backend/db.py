@@ -26,12 +26,3 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 class Base(DeclarativeBase):
     pass
-
-
-def init_db() -> None:
-    """Create tables. Idempotent — safe to call on every startup."""
-    # Importing here so the User model registers itself with Base before
-    # create_all runs.
-    from models import User  # noqa: F401
-
-    Base.metadata.create_all(bind=engine)
