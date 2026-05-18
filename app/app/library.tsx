@@ -20,6 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Fonts, Radii, Spacing } from '../constants/theme';
 import {
   ApiError,
+  deletePhoto,
   downloadUrl,
   listPhotos,
   type PhotoSummary,
@@ -30,12 +31,19 @@ interface CardProps {
   busy: boolean;
   onSave: (p: PhotoSummary) => void;
   onShare: (p: PhotoSummary) => void;
+  onDelete: (p: PhotoSummary) => void;
 }
 
-function PhotoCard({ photo, busy, onSave, onShare }: CardProps) {
-  const ts = new Date(photo.processed_at);
+function PhotoCard({ photo, busy, onSave, onShare, onDelete }: CardProps) {
+  const ts = new Date(photo.processed_at ?? photo.created_at);
   return (
-    <View style={styles.card}>
+    <Pressable
+      onLongPress={() => onDelete(photo)}
+      delayLongPress={400}
+      accessibilityRole="button"
+      accessibilityLabel="Photo card. Long-press to delete."
+      style={styles.card}
+    >
       <View style={styles.perforation}>
         {Array.from({ length: 6 }).map((_, i) => (
           <View key={i} style={styles.perfHole} />
@@ -90,7 +98,7 @@ function PhotoCard({ photo, busy, onSave, onShare }: CardProps) {
           </Pressable>
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -181,6 +189,35 @@ export default function LibraryScreen() {
     }
   };
 
+  const onDelete = (p: PhotoSummary) => {
+    Alert.alert(
+      'Delete scan?',
+      `${p.filename} will be removed from the server.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setBusyId(p.photo_id);
+            try {
+              await deletePhoto(p.photo_id);
+              await Haptics.notificationAsync(
+                Haptics.NotificationFeedbackType.Success,
+              );
+              setItems((prev) => prev.filter((x) => x.photo_id !== p.photo_id));
+            } catch (e) {
+              const msg = e instanceof ApiError ? e.message : String(e);
+              Alert.alert('Delete failed', msg);
+            } finally {
+              setBusyId(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <View style={styles.header}>
@@ -222,6 +259,7 @@ export default function LibraryScreen() {
               busy={busyId === item.photo_id}
               onSave={onSave}
               onShare={onShare}
+              onDelete={onDelete}
             />
           )}
           contentContainerStyle={styles.list}
