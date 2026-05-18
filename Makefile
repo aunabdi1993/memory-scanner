@@ -1,4 +1,4 @@
-.PHONY: install backend app lint test clean
+.PHONY: install backend app lint test clean migrate migration
 
 install:
 	./backend/setup.sh
@@ -16,6 +16,13 @@ lint:
 
 test:
 	cd backend && ./venv/bin/pytest tests/
+
+migrate:
+	cd backend && ./venv/bin/alembic upgrade head
+
+# Usage: make migration name="add photos table"
+migration:
+	cd backend && ./venv/bin/alembic revision --autogenerate -m "$(name)"
 
 clean:
 	rm -rf backend/venv backend/uploads backend/processed
