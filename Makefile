@@ -1,7 +1,7 @@
 .PHONY: install backend app lint test clean migrate migration docker-build docker-up docker-down
 
 install:
-	cd backend && python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
+	./backend/setup.sh
 	cd app && npm install
 
 backend:

@@ -14,37 +14,17 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Colors, Fonts, Radii, Spacing } from '../constants/theme';
 import {
-  ApiError,
-  downloadUrl,
-  processPhoto,
-  type DateParts,
-} from '../services/api';
-
-interface DraftDate {
-  month: string;
-  day: string;
-  year: string;
-}
-
-function validate(d: DraftDate): DateParts | null {
-  const m = parseInt(d.month, 10);
-  const day = parseInt(d.day, 10);
-  const y = parseInt(d.year, 10);
-  if (!Number.isFinite(m) || m < 1 || m > 12) return null;
-  if (!Number.isFinite(day) || day < 1 || day > 31) return null;
-  if (!Number.isFinite(y) || y < 1950 || y > 2030) return null;
-  // Reject impossible calendar dates (e.g. Feb 30).
-  const probe = new Date(y, m - 1, day);
-  if (probe.getMonth() !== m - 1 || probe.getDate() !== day) return null;
-  return { year: y, month: m, day };
-}
+  DateInputRow,
+  validateDraft,
+  type DraftDate,
+} from '../components/DateInputRow';
+import { Colors, Fonts, Radii, Spacing } from '../constants/theme';
+import { ApiError, downloadUrl, processPhoto } from '../services/api';
 
 export default function ReviewScreen() {
   const router = useRouter();
@@ -70,7 +50,7 @@ export default function ReviewScreen() {
 
   const [draft, setDraft] = useState<DraftDate>(initial);
   const [saving, setSaving] = useState(false);
-  const valid = useMemo(() => validate(draft), [draft]);
+  const valid = useMemo(() => validateDraft(draft), [draft]);
   const dirty =
     draft.month !== initial.month ||
     draft.day !== initial.day ||
@@ -185,40 +165,7 @@ export default function ReviewScreen() {
 
           <Text style={styles.label}>CAPTURE DATE</Text>
 
-          <View style={styles.dateRow}>
-            <TextInput
-              value={draft.month}
-              onChangeText={(t) => setDraft({ ...draft, month: t.replace(/\D/g, '').slice(0, 2) })}
-              placeholder="MM"
-              placeholderTextColor={Colors.textSubtle}
-              keyboardType="number-pad"
-              maxLength={2}
-              style={styles.dateInput}
-              accessibilityLabel="Month"
-            />
-            <Text style={styles.dateSep}>/</Text>
-            <TextInput
-              value={draft.day}
-              onChangeText={(t) => setDraft({ ...draft, day: t.replace(/\D/g, '').slice(0, 2) })}
-              placeholder="DD"
-              placeholderTextColor={Colors.textSubtle}
-              keyboardType="number-pad"
-              maxLength={2}
-              style={styles.dateInput}
-              accessibilityLabel="Day"
-            />
-            <Text style={styles.dateSep}>/</Text>
-            <TextInput
-              value={draft.year}
-              onChangeText={(t) => setDraft({ ...draft, year: t.replace(/\D/g, '').slice(0, 4) })}
-              placeholder="YYYY"
-              placeholderTextColor={Colors.textSubtle}
-              keyboardType="number-pad"
-              maxLength={4}
-              style={[styles.dateInput, styles.dateInputYear]}
-              accessibilityLabel="Year"
-            />
-          </View>
+          <DateInputRow value={draft} onChange={setDraft} />
 
           {detected && dirty ? (
             <Pressable onPress={restoreDetected} accessibilityRole="button">
@@ -298,26 +245,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 3,
   },
-  dateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  dateInput: {
-    flex: 1,
-    color: Colors.text,
-    backgroundColor: Colors.surface,
-    borderRadius: Radii.sm,
-    paddingVertical: 14,
-    paddingHorizontal: Spacing.md,
-    textAlign: 'center',
-    fontFamily: Fonts.mono,
-    fontSize: 22,
-    letterSpacing: 2,
-    minHeight: 44,
-  },
-  dateInputYear: { flex: 1.4 },
-  dateSep: { color: Colors.textSubtle, fontSize: 22, fontFamily: Fonts.mono },
   restoreLink: {
     color: Colors.amber,
     fontFamily: Fonts.ui,

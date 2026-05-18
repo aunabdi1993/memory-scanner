@@ -33,7 +33,18 @@ from auth import (
     issue_session_token,
     verify_apple_token,
 )
-from config import get_settings
+
+from billing import (
+    AppleVerificationError,
+    FREE_SCAN_LIMIT,
+    PRODUCT_ID,
+    apply_transaction,
+    entitled,
+    fetch_transaction,
+    record_scan,
+    verify_apple_jws,
+)
+
 from exif_writer import embed_date_in_exif, safe_target_path
 from models import User
 from ocr import detect_date_in_image
@@ -66,6 +77,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if os.getenv("RUN_MIGRATIONS_ON_START", "true").lower() in ("1", "true", "yes"):
         _run_migrations()
     logger.info("Memories Scanner backend %s starting (env=%s)", VERSION, settings.env)
+    logger.info("Memories Scanner backend %s starting", VERSION)
     logger.info("Uploads dir:   %s", UPLOADS_DIR)
     logger.info("Processed dir: %s", PROCESSED_DIR)
     logger.info("CORS origins:  %s", settings.cors_origins)
@@ -177,8 +189,15 @@ async def scan(
     request: Request,
     photo: UploadFile = File(...),
     user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> dict:
-    """Save an uploaded photo, run OCR, and return the detected date."""
+    """Save an uploaded photo, run OCR, and return the detected date.
+
+    Free-tier users get ``FREE_SCAN_LIMIT`` scans total; exceeding it
+    returns 402 with a structured body the app uses to pop the paywall.
+    The quota check + recording happen inside one transaction so two
+    parallel uploads at scan #25 can't both win.
+    """
     if photo.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(
             status_code=400,
@@ -188,6 +207,27 @@ async def scan(
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > settings.max_upload_bytes:
         raise HTTPException(status_code=413, detail="upload too large")
+    # Quota check. Wrap in BEGIN IMMEDIATE on SQLite to serialize the
+    # read-then-write against concurrent /scan calls. On Postgres, the
+    # row-level lock on the User row achieves the same.
+    fresh_user = (
+        db.query(User).filter(User.id == user.id).with_for_update().one_or_none()
+        if db.bind.dialect.name != "sqlite"
+        else db.get(User, user.id)
+    )
+    if fresh_user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    snap = entitled(fresh_user)
+    if snap.tier == "free" and snap.scans_remaining <= 0:
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "code": "quota_exhausted",
+                "scans_used": snap.scans_used,
+                "limit": FREE_SCAN_LIMIT,
+                "product_id": PRODUCT_ID,
+            },
+        )
 
     photo_id = uuid.uuid4().hex
     target = _user_uploads(user.id) / f"{photo_id}.jpg"
@@ -205,6 +245,11 @@ async def scan(
     logger.info("Saved upload %s (%d bytes)", target, target.stat().st_size)
 
     result = detect_date_in_image(str(target))
+
+    # Count the call: compute was spent regardless of OCR success.
+    record_scan(db, fresh_user, photo_id=photo_id, counted=True)
+    db.commit()
+
     return {"photo_id": photo_id, **result.to_dict()}
 
 
@@ -284,3 +329,117 @@ def list_photos(user: User = Depends(get_current_user)) -> dict:
         )
     items.sort(key=lambda x: x["processed_at"], reverse=True)
     return {"photos": items, "count": len(items)}
+
+
+# ---------------------------------------------------------------- billing #
+
+
+class VerifyReceiptIn(BaseModel):
+    signed_transaction_jws: str = Field(..., min_length=10)
+
+
+@app.get("/billing/status")
+def billing_status(user: User = Depends(get_current_user)) -> dict:
+    """Return the user's entitlement snapshot. Cheap; client caches it."""
+    return entitled(user).to_dict()
+
+
+@app.post("/billing/verify-receipt")
+def verify_receipt(
+    body: VerifyReceiptIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Verify a StoreKit-signed transaction and bind it to the caller.
+
+    The app POSTs the ``jwsRepresentation`` from a successful purchase
+    (or each item from a Restore-Purchases flow). We verify Apple's
+    signature, optionally cross-check via the App Store Server API for
+    a fresh status, then upsert ``Subscription`` + project onto User.
+    """
+    try:
+        claims = verify_apple_jws(body.signed_transaction_jws)
+    except AppleVerificationError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # Cross-check via App Store Server API when keys are configured.
+    # Falls back to the client-provided claims when not.
+    fresh = fetch_transaction(
+        claims.get("transactionId", ""),
+        environment=str(claims.get("environment", "Sandbox")),
+    )
+    effective = fresh or claims
+
+    apply_transaction(db, user, effective, raw_payload=body.signed_transaction_jws)
+    db.commit()
+    return entitled(user).to_dict()
+
+
+@app.post("/billing/apple-notifications")
+async def apple_notifications(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    """App Store Server Notifications V2 webhook.
+
+    No auth header — trust comes from JWS signature + chain validation.
+    Idempotent on ``transactionId``: replays are safe.
+    """
+    body = await request.json()
+    signed = body.get("signedPayload")
+    if not signed:
+        raise HTTPException(status_code=400, detail="missing signedPayload")
+    try:
+        notif = verify_apple_jws(signed)
+    except AppleVerificationError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    notif_type = notif.get("notificationType")
+    data = notif.get("data") or {}
+    signed_tx = data.get("signedTransactionInfo")
+    if not signed_tx:
+        # Some notification types (e.g. CONSUMPTION_REQUEST) carry no
+        # transaction body; we acknowledge but no-op.
+        logger.info("Apple notification %s with no transaction body", notif_type)
+        return {"ok": True}
+    try:
+        tx_claims = verify_apple_jws(signed_tx)
+    except AppleVerificationError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    original_id = (
+        tx_claims.get("originalTransactionId") or tx_claims.get("transactionId")
+    )
+    if not original_id:
+        raise HTTPException(status_code=400, detail="missing originalTransactionId")
+
+    # Resolve the user via the existing Subscription row (the only
+    # binding back to a User we trust for unauth'd webhooks).
+    from models import Subscription
+
+    sub = (
+        db.query(Subscription)
+        .filter(Subscription.original_transaction_id == original_id)
+        .one_or_none()
+    )
+    if sub is None:
+        # First time we see this original_transaction_id without an
+        # active /billing/verify-receipt call. Drop quietly; user's app
+        # will replay verification on next open.
+        logger.info(
+            "Apple notification for unknown original_transaction_id %s; dropping",
+            original_id,
+        )
+        return {"ok": True}
+    user = db.get(User, sub.user_id)
+    if user is None:
+        return {"ok": True}
+    apply_transaction(
+        db,
+        user,
+        tx_claims,
+        notification_type=notif_type,
+        raw_payload=signed,
+    )
+    db.commit()
+    return {"ok": True}
