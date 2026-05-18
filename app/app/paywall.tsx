@@ -15,8 +15,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Fonts, Radii, Spacing } from '../constants/theme';
 import { useEntitlement } from '../contexts/EntitlementContext';
 import {
+  getLifetimeProduct,
   getProProduct,
   isIapAvailable,
+  purchaseLifetime,
   purchaseMonthly,
   restorePurchases,
   type ProProduct,
@@ -25,24 +27,31 @@ import {
 const TOS_URL = 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
 const PRIVACY_URL = 'https://memoriesscanner.app/privacy';
 
+type Plan = 'monthly' | 'lifetime';
+
 export default function PaywallScreen() {
   const router = useRouter();
   const { snapshot, refresh } = useEntitlement();
-  const [product, setProduct] = useState<ProProduct | null>(null);
-  const [loadingProduct, setLoadingProduct] = useState(true);
-  const [buying, setBuying] = useState(false);
+  const [monthly, setMonthly] = useState<ProProduct | null>(null);
+  const [lifetime, setLifetime] = useState<ProProduct | null>(null);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [buying, setBuying] = useState<Plan | null>(null);
   const [restoring, setRestoring] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const p = await getProProduct();
-        if (!cancelled) setProduct(p);
-      } catch {
-        if (!cancelled) setProduct(null);
+        const [m, l] = await Promise.all([
+          getProProduct().catch(() => null),
+          getLifetimeProduct().catch(() => null),
+        ]);
+        if (!cancelled) {
+          setMonthly(m);
+          setLifetime(l);
+        }
       } finally {
-        if (!cancelled) setLoadingProduct(false);
+        if (!cancelled) setLoadingProducts(false);
       }
     })();
     return () => {
@@ -50,19 +59,20 @@ export default function PaywallScreen() {
     };
   }, []);
 
-  const onSubscribe = async () => {
+  const onBuy = async (plan: Plan) => {
     if (buying) return;
-    setBuying(true);
+    setBuying(plan);
     try {
-      const snap = await purchaseMonthly();
+      const snap =
+        plan === 'monthly' ? await purchaseMonthly() : await purchaseLifetime();
       await refresh();
       if (snap.tier === 'pro') router.back();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Purchase failed.';
       // Apple's user-cancelled error is intentionally quiet.
-      if (!/cancel/i.test(msg)) Alert.alert('Subscription failed', msg);
+      if (!/cancel/i.test(msg)) Alert.alert('Purchase failed', msg);
     } finally {
-      setBuying(false);
+      setBuying(null);
     }
   };
 
@@ -73,12 +83,12 @@ export default function PaywallScreen() {
       const snap = await restorePurchases();
       await refresh();
       if (snap?.tier === 'pro') {
-        Alert.alert('Restored', 'Your Pro subscription is active again.');
+        Alert.alert('Restored', 'Your Pro access is active again.');
         router.back();
       } else {
         Alert.alert(
           'Nothing to restore',
-          'No active subscription found for this Apple ID.',
+          'No active purchase found for this Apple ID.',
         );
       }
     } catch (e: unknown) {
@@ -89,9 +99,14 @@ export default function PaywallScreen() {
     }
   };
 
-  const priceLabel = loadingProduct
+  const monthlyPrice = loadingProducts
     ? '—'
-    : product?.displayPrice ?? '£4.99';
+    : monthly?.displayPrice ?? '£4.99';
+  const lifetimePrice = loadingProducts
+    ? '—'
+    : lifetime?.displayPrice ?? '£14.99';
+
+  const iapReady = isIapAvailable();
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -115,6 +130,7 @@ export default function PaywallScreen() {
 
         <View style={styles.benefits}>
           <Benefit text="Unlimited photo scans, dated automatically" />
+          <Benefit text="Batch scan up to 50 prints at a time" />
           <Benefit text="Higher OCR priority — no waiting in queue" />
           <Benefit text="All your existing scans stay yours, always" />
         </View>
@@ -128,37 +144,33 @@ export default function PaywallScreen() {
           </View>
         ) : null}
 
-        <View style={styles.priceCard}>
-          <Text style={styles.priceLine}>
-            <Text style={styles.priceBig}>{priceLabel}</Text>
-            <Text style={styles.priceSmall}> / month</Text>
-          </Text>
-          <Text style={styles.priceSubtle}>Cancel anytime in Settings.</Text>
+        <View style={styles.cards}>
+          <PriceCard
+            badge="MOST POPULAR"
+            price={monthlyPrice}
+            unit="/ month"
+            footnote="Cancel anytime"
+            ctaText={iapReady ? 'Subscribe' : 'Not available'}
+            buying={buying === 'monthly'}
+            disabled={!iapReady || !!buying}
+            onPress={() => onBuy('monthly')}
+          />
+          <PriceCard
+            badge="BEST VALUE"
+            price={lifetimePrice}
+            unit="one-time"
+            footnote="Pay once · yours forever"
+            ctaText={iapReady ? 'Buy lifetime' : 'Not available'}
+            buying={buying === 'lifetime'}
+            disabled={!iapReady || !!buying}
+            onPress={() => onBuy('lifetime')}
+            accent
+          />
         </View>
 
         <Pressable
-          onPress={onSubscribe}
-          disabled={buying || !isIapAvailable()}
-          accessibilityRole="button"
-          accessibilityLabel="Subscribe to Memories Scanner Pro"
-          style={({ pressed }) => [
-            styles.primary,
-            (buying || !isIapAvailable()) && styles.primaryDisabled,
-            pressed && styles.primaryPressed,
-          ]}
-        >
-          {buying ? (
-            <ActivityIndicator color={Colors.bg} />
-          ) : (
-            <Text style={styles.primaryText}>
-              {isIapAvailable() ? 'Subscribe' : 'Available in App Store build'}
-            </Text>
-          )}
-        </Pressable>
-
-        <Pressable
           onPress={onRestore}
-          disabled={restoring}
+          disabled={restoring || !!buying}
           accessibilityRole="button"
           accessibilityLabel="Restore purchases"
           style={styles.secondary}
@@ -169,10 +181,14 @@ export default function PaywallScreen() {
         </Pressable>
 
         <Text style={styles.fineprint}>
-          Auto-renewing subscription. Your Apple ID is charged{' '}
-          {product?.displayPrice ?? priceLabel} per month, renewing automatically
-          unless cancelled at least 24 hours before the end of the current
-          period. Manage and cancel in your Apple ID Settings → Subscriptions.
+          Subscription: auto-renewing. Your Apple ID is charged{' '}
+          {monthlyPrice} per month, renewing automatically unless cancelled at
+          least 24 hours before the end of the current period. Manage and
+          cancel in your Apple ID Settings → Subscriptions.
+          {'\n\n'}
+          Lifetime: one-time purchase of {lifetimePrice}. No renewals, no
+          recurring charges. Refunds handled by Apple under standard App
+          Store terms.
         </Text>
 
         <View style={styles.linkRow}>
@@ -200,6 +216,59 @@ function Benefit({ text }: { text: string }) {
     <View style={styles.benefitRow}>
       <Text style={styles.benefitCheck}>✓</Text>
       <Text style={styles.benefitText}>{text}</Text>
+    </View>
+  );
+}
+
+interface PriceCardProps {
+  badge: string;
+  price: string;
+  unit: string;
+  footnote: string;
+  ctaText: string;
+  buying: boolean;
+  disabled: boolean;
+  onPress: () => void;
+  accent?: boolean;
+}
+
+function PriceCard({
+  badge,
+  price,
+  unit,
+  footnote,
+  ctaText,
+  buying,
+  disabled,
+  onPress,
+  accent,
+}: PriceCardProps) {
+  return (
+    <View style={[styles.priceCard, accent && styles.priceCardAccent]}>
+      <Text style={[styles.priceBadge, accent && styles.priceBadgeAccent]}>
+        {badge}
+      </Text>
+      <Text style={styles.priceBig}>{price}</Text>
+      <Text style={styles.priceUnit}>{unit}</Text>
+      <Text style={styles.priceFootnote}>{footnote}</Text>
+      <Pressable
+        onPress={onPress}
+        disabled={disabled}
+        accessibilityRole="button"
+        accessibilityLabel={ctaText}
+        style={({ pressed }) => [
+          styles.primary,
+          accent && styles.primaryAccent,
+          disabled && styles.primaryDisabled,
+          pressed && !disabled && styles.primaryPressed,
+        ]}
+      >
+        {buying ? (
+          <ActivityIndicator color={Colors.bg} />
+        ) : (
+          <Text style={styles.primaryText}>{ctaText}</Text>
+        )}
+      </Pressable>
     </View>
   );
 }
@@ -257,37 +326,74 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 1,
   },
-  priceCard: {
+  cards: {
+    flexDirection: 'row',
+    gap: Spacing.md,
     marginTop: Spacing.lg,
-    padding: Spacing.lg,
+  },
+  priceCard: {
+    flex: 1,
+    padding: Spacing.md,
     backgroundColor: Colors.surface,
     borderRadius: Radii.md,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
-  priceLine: { color: Colors.text, fontFamily: Fonts.display },
-  priceBig: { fontSize: 38, color: Colors.amber },
-  priceSmall: { fontSize: 16, color: Colors.textMuted, fontFamily: Fonts.ui },
-  priceSubtle: {
+  priceCardAccent: {
+    borderColor: Colors.amber,
+    backgroundColor: Colors.bgElevated,
+  },
+  priceBadge: {
+    color: Colors.textMuted,
+    fontFamily: Fonts.mono,
+    fontSize: 10,
+    letterSpacing: 2,
+    marginBottom: Spacing.sm,
+  },
+  priceBadgeAccent: { color: Colors.amber },
+  priceBig: {
+    fontSize: 30,
+    color: Colors.amber,
+    fontFamily: Fonts.display,
+  },
+  priceUnit: {
+    fontSize: 13,
+    color: Colors.textMuted,
+    fontFamily: Fonts.ui,
+    marginTop: 2,
+  },
+  priceFootnote: {
     color: Colors.textSubtle,
     fontFamily: Fonts.mono,
-    fontSize: 11,
+    fontSize: 10,
     letterSpacing: 1,
-    marginTop: Spacing.xs,
+    marginTop: Spacing.sm,
+    textAlign: 'center',
+    minHeight: 14,
   },
   primary: {
-    backgroundColor: Colors.amber,
+    backgroundColor: Colors.surface,
     borderRadius: Radii.md,
-    paddingVertical: 18,
+    paddingVertical: 14,
+    paddingHorizontal: Spacing.md,
     alignItems: 'center',
-    marginTop: Spacing.lg,
+    marginTop: Spacing.md,
     minHeight: 44,
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderColor: Colors.amber,
   },
-  primaryPressed: { backgroundColor: Colors.amberDeep },
-  primaryDisabled: { backgroundColor: Colors.divider },
+  primaryAccent: {
+    backgroundColor: Colors.amber,
+    borderColor: Colors.amber,
+  },
+  primaryPressed: { opacity: 0.85 },
+  primaryDisabled: { backgroundColor: Colors.divider, borderColor: Colors.divider },
   primaryText: {
     color: Colors.bg,
     fontFamily: Fonts.ui,
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
     letterSpacing: 0.4,
   },

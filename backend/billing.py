@@ -53,7 +53,10 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------- #
 
 FREE_SCAN_LIMIT = 25
-PRODUCT_ID = "com.memoriesscanner.pro.monthly"
+MONTHLY_PRODUCT_ID = "com.memoriesscanner.pro.monthly"
+LIFETIME_PRODUCT_ID = "com.memoriesscanner.pro.lifetime"
+# Back-compat alias: pre-lifetime callers imported PRODUCT_ID.
+PRODUCT_ID = MONTHLY_PRODUCT_ID
 GRACE_PERIOD_DAYS = 16  # Apple's documented max billing-retry window.
 
 # Pinned Apple Root CA G3, PEM-encoded. Public, available at
@@ -93,7 +96,8 @@ class EntitlementSnapshot:
     scans_used: int
     scans_remaining: int  # math.inf-equivalent: -1 means unlimited
     expires_at: Optional[datetime]
-    status: str  # mirrors User.subscription_status
+    status: str  # mirrors User.subscription_status (or "lifetime")
+    has_lifetime: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -105,7 +109,9 @@ class EntitlementSnapshot:
             ),
             "status": self.status,
             "free_limit": FREE_SCAN_LIMIT,
-            "product_id": PRODUCT_ID,
+            "product_id": MONTHLY_PRODUCT_ID,
+            "lifetime_product_id": LIFETIME_PRODUCT_ID,
+            "has_lifetime": self.has_lifetime,
         }
 
 
@@ -116,6 +122,19 @@ def entitled(user: User) -> EntitlementSnapshot:
     # Normalize naive datetimes (SQLite returns naive timestamps) back to UTC.
     if expires is not None and expires.tzinfo is None:
         expires = expires.replace(tzinfo=timezone.utc)
+
+    has_lifetime = bool(getattr(user, "has_lifetime", False))
+
+    # Lifetime short-circuits everything. No expiry, no quota.
+    if has_lifetime:
+        return EntitlementSnapshot(
+            tier="pro",
+            scans_used=user.lifetime_scans,
+            scans_remaining=-1,
+            expires_at=None,
+            status="lifetime",
+            has_lifetime=True,
+        )
 
     is_pro = user.subscription_status in {"active", "grace"} and (
         expires is None or expires > now - timedelta(days=GRACE_PERIOD_DAYS)
@@ -128,6 +147,7 @@ def entitled(user: User) -> EntitlementSnapshot:
             scans_remaining=-1,
             expires_at=expires,
             status=user.subscription_status,
+            has_lifetime=False,
         )
     remaining = max(0, FREE_SCAN_LIMIT - user.lifetime_scans)
     return EntitlementSnapshot(
@@ -136,6 +156,7 @@ def entitled(user: User) -> EntitlementSnapshot:
         scans_remaining=remaining,
         expires_at=expires,
         status=user.subscription_status,
+        has_lifetime=False,
     )
 
 
@@ -389,9 +410,15 @@ def apply_transaction(
         raise AppleVerificationError(
             "Transaction payload missing originalTransactionId"
         )
-    product_id = transaction_claims.get("productId") or PRODUCT_ID
+    product_id = transaction_claims.get("productId") or MONTHLY_PRODUCT_ID
+    is_lifetime = product_id == LIFETIME_PRODUCT_ID
     environment = transaction_claims.get("environment", "Sandbox").lower()
-    expires_at = _ms_to_datetime(transaction_claims.get("expiresDate"))
+    # Lifetime IAPs are non-consumable and never expire, even if Apple
+    # echoes back an expiresDate in some edge cases.
+    expires_at = (
+        None if is_lifetime
+        else _ms_to_datetime(transaction_claims.get("expiresDate"))
+    )
     revoked_at = _ms_to_datetime(transaction_claims.get("revocationDate"))
     new_status = _project_status(notification_type, expires_at, revoked_at)
 
@@ -413,13 +440,13 @@ def apply_transaction(
         db.add(sub)
     else:
         # Reject silent reassignment: another user already owns this
-        # subscription. The caller turns this into a 409.
+        # purchase. The caller turns this into a 409.
         if sub.user_id != user.id:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
                     "code": "already_bound",
-                    "message": "This subscription is tied to a different account.",
+                    "message": "This purchase is tied to a different account.",
                 },
             )
         sub.product_id = product_id
@@ -429,8 +456,28 @@ def apply_transaction(
         sub.last_notification_at = datetime.now(timezone.utc)
         sub.raw_payload_json = raw_payload or json.dumps(transaction_claims)
 
-    # Project onto User
-    user.apple_original_transaction_id = original_id
-    user.subscription_status = new_status
-    user.subscription_expires_at = expires_at
+    db.flush()  # ensure the just-written row is visible to the re-derive below
+
+    if is_lifetime:
+        # Re-derive has_lifetime from the table so refunds (REFUND / REVOKE)
+        # clear the flag, and so a user with multiple lifetime rows keeps
+        # the entitlement as long as any one remains "active".
+        has_active = (
+            db.query(Subscription)
+            .filter(
+                Subscription.user_id == user.id,
+                Subscription.product_id == LIFETIME_PRODUCT_ID,
+                Subscription.status == "active",
+            )
+            .first()
+            is not None
+        )
+        user.has_lifetime = has_active
+        # Lifetime does not touch the subscription projection columns.
+        # If the user also holds a monthly sub, those fields keep tracking it.
+    else:
+        # Subscription product — project onto the dedicated columns.
+        user.apple_original_transaction_id = original_id
+        user.subscription_status = new_status
+        user.subscription_expires_at = expires_at
     return sub

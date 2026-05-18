@@ -147,10 +147,19 @@ export default function ScanScreen() {
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       quality: 0.95,
       allowsEditing: false,
+      allowsMultipleSelection: true,
+      selectionLimit: 50,
     });
-    if (!result.canceled && result.assets[0]) {
+    if (result.canceled || result.assets.length === 0) return;
+    if (result.assets.length === 1) {
       await dispatchScan(result.assets[0].uri);
+      return;
     }
+    const uris = result.assets.map((a) => a.uri);
+    router.push({
+      pathname: '/batch',
+      params: { uris: JSON.stringify(uris) },
+    });
   };
 
   if (!permission) {

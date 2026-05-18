@@ -59,6 +59,11 @@ export default function RootLayout() {
                   <Stack.Screen name="index" />
                   <Stack.Screen name="scan" options={{ presentation: 'modal' }} />
                   <Stack.Screen name="review" options={{ presentation: 'card' }} />
+                  <Stack.Screen name="batch" options={{ presentation: 'card' }} />
+                  <Stack.Screen
+                    name="batch-review"
+                    options={{ presentation: 'card' }}
+                  />
                   <Stack.Screen name="library" />
                   <Stack.Screen name="login" />
                   <Stack.Screen
