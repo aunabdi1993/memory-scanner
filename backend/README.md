@@ -16,6 +16,16 @@ Or from repo root: `make install && make migrate && make backend`.
 (`make backend` runs migrations automatically on startup unless
 `RUN_MIGRATIONS_ON_START=false`.)
 
+### Docker
+
+```bash
+make docker-build       # builds the production image (Tesseract baked in)
+make docker-up          # starts backend on :8000 with a persistent volume
+```
+
+Uploads, processed JPEGs, and the SQLite DB all live on the named
+`backend_data` volume under `/data`. See `../docker-compose.yml`.
+
 ## Endpoints
 
 | Method | Path                  | Description                                  |

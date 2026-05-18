@@ -15,3 +15,6 @@ cryptography==43.0.1
 requests==2.32.3
 SQLAlchemy==2.0.35
 alembic==1.13.3
+gunicorn==22.0.0
+pydantic-settings==2.5.2
+slowapi==0.1.9

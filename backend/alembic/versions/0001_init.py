@@ -1,8 +1,10 @@
+
 """init: users + billing tables
 
 Revision ID: 0001
 Revises:
 Create Date: 2026-05-17
+
 
 Single revision creating the full current schema (users with billing
 columns, subscriptions, usage_log + composite index). The stop-gap
@@ -30,6 +32,7 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             nullable=False,
         ),
+      
         sa.Column(
             "lifetime_scans",
             sa.Integer(),

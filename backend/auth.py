@@ -42,6 +42,12 @@ SESSION_TTL_DAYS = 30
 
 
 def _env(name: str, default: Optional[str] = None) -> str:
+    """Lookup an env var at call time.
+
+    Kept as a function (rather than importing from config) so test
+    fixtures that monkeypatch os.environ keep working without rebuilding
+    a Settings instance.
+    """
     val = os.getenv(name, default)
     if val is None:
         raise RuntimeError(f"Missing required env var {name!r}")
