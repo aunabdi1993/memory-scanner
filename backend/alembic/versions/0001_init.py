@@ -52,6 +52,12 @@ def upgrade() -> None:
             sa.String(length=64),
             nullable=True,
         ),
+        sa.Column(
+            "has_lifetime",
+            sa.Boolean(),
+            nullable=False,
+            server_default="0",
+        ),
     )
     op.create_index(
         "ix_users_apple_original_transaction_id",
