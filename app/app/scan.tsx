@@ -1,5 +1,6 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
@@ -13,15 +14,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { File } from 'expo-file-system';
-
 import { useOnline } from '../components/OfflineBanner';
 import { Colors, Fonts, Radii, Spacing } from '../constants/theme';
-import {
-  ApiError,
-  isLargeUpload,
-  scanPhotoWithProgress,
-} from '../services/api';
+import { ApiError, scanPhotoWithProgress } from '../services/api';
+
+// 2048px long edge keeps OCR accurate while cutting payloads ~10x for
+// a typical 20MP capture. Tesseract doesn't need full sensor resolution
+// to read a date stamp.
+const MAX_LONG_EDGE_PX = 2048;
 
 const VIEWFINDER_RATIO = 0.85;
 
@@ -62,24 +62,17 @@ export default function ScanScreen() {
   const [progress, setProgress] = useState(0);
   const online = useOnline();
 
-  const confirmLargeUpload = async (uri: string): Promise<boolean> => {
+  const shrinkForUpload = async (uri: string): Promise<string> => {
     try {
-      const file = new File(uri);
-      const size = file.exists ? file.size : 0;
-      if (!isLargeUpload(size)) return true;
-    } catch {
-      return true; // if we can't stat, don't block the user
-    }
-    return new Promise<boolean>((resolve) => {
-      Alert.alert(
-        'Large photo',
-        'This file is over 15 MB and may take a while to upload. Continue?',
-        [
-          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-          { text: 'Upload', onPress: () => resolve(true) },
-        ],
+      const result = await ImageManipulator.manipulateAsync(
+        uri,
+        [{ resize: { width: MAX_LONG_EDGE_PX } }],
+        { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG },
       );
-    });
+      return result.uri;
+    } catch {
+      return uri; // resize failed — let the server-side cap handle it
+    }
   };
 
   const dispatchScan = async (uri: string) => {
@@ -87,11 +80,11 @@ export default function ScanScreen() {
       Alert.alert('Offline', 'Reconnect to upload this scan.');
       return;
     }
-    if (!(await confirmLargeUpload(uri))) return;
     setAnalyzing(true);
     setProgress(0);
     try {
-      const result = await scanPhotoWithProgress(uri, setProgress);
+      const uploadUri = await shrinkForUpload(uri);
+      const result = await scanPhotoWithProgress(uploadUri, setProgress);
       router.replace({
         pathname: '/review',
         params: {

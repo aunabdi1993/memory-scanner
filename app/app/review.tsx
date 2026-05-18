@@ -173,13 +173,17 @@ export default function ReviewScreen() {
           <View
             style={[
               styles.badge,
-              detected ? styles.badgeOk : styles.badgeMissing,
+              detected && confidencePct >= 60 && styles.badgeOk,
+              detected && confidencePct < 60 && styles.badgeWarn,
+              !detected && styles.badgeMissing,
             ]}
           >
             <Text style={styles.badgeText}>
-              {detected
+              {detected && confidencePct >= 60
                 ? `Date detected · ${confidencePct}% confidence`
-                : 'No date stamp found — enter manually'}
+                : detected
+                  ? `Low confidence · ${confidencePct}% — double-check the date`
+                  : 'No date stamp found — enter manually'}
             </Text>
           </View>
 
@@ -285,6 +289,7 @@ const styles = StyleSheet.create({
     borderRadius: Radii.pill,
   },
   badgeOk: { backgroundColor: Colors.sageDeep },
+  badgeWarn: { backgroundColor: Colors.amberSoft },
   badgeMissing: { backgroundColor: Colors.amberSoft },
   badgeText: {
     color: Colors.text,
