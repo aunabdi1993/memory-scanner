@@ -98,7 +98,7 @@ app = FastAPI(title="Memories Scanner", version=VERSION, lifespan=lifespan)
 
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 app.add_middleware(RequestIdMiddleware)
 if settings.env == "production" and settings.trusted_hosts:
@@ -226,9 +226,10 @@ async def scan(
     # Quota check. Wrap in BEGIN IMMEDIATE on SQLite to serialize the
     # read-then-write against concurrent /scan calls. On Postgres, the
     # row-level lock on the User row achieves the same.
+    bind = db.get_bind()
     fresh_user = (
         db.query(User).filter(User.id == user.id).with_for_update().one_or_none()
-        if db.bind.dialect.name != "sqlite"
+        if bind.dialect.name != "sqlite"
         else db.get(User, user.id)
     )
     if fresh_user is None:
@@ -264,7 +265,7 @@ async def scan(
     detected_date: date_type | None = None
     if result.date is not None:
         detected_date = date_type(
-            result.date["year"], result.date["month"], result.date["day"]
+            result.date.year, result.date.month, result.date.day
         )
 
     db.add(
@@ -283,7 +284,15 @@ async def scan(
     return ScanOut(
         photo_id=photo_id,
         detected=result.detected,
-        date=DateInput(**result.date) if result.date else None,
+        date=(
+            DateInput(
+                year=result.date.year,
+                month=result.date.month,
+                day=result.date.day,
+            )
+            if result.date is not None
+            else None
+        ),
         confidence=result.confidence,
     )
 

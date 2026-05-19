@@ -211,6 +211,8 @@ def _verify_signature(cert: x509.Certificate, parent: x509.Certificate) -> None:
     sig = cert.signature
     tbs = cert.tbs_certificate_bytes
     algo = cert.signature_hash_algorithm
+    if algo is None:
+        raise AppleVerificationError("Certificate has no signature hash algorithm")
     if isinstance(parent_pub, ec.EllipticCurvePublicKey):
         parent_pub.verify(sig, tbs, ec.ECDSA(algo))
     elif isinstance(parent_pub, rsa.RSAPublicKey):
@@ -277,6 +279,10 @@ def verify_apple_jws(token: str, *, verify_chain: bool = True) -> dict[str, Any]
         _verify_chain(chain)
 
     leaf_pub = chain[0].public_key()
+    if not isinstance(leaf_pub, ec.EllipticCurvePublicKey):
+        raise AppleVerificationError(
+            "Apple JWS expects an EC P-256 leaf certificate"
+        )
     try:
         return jwt.decode(token, leaf_pub, algorithms=["ES256"])
     except jwt.PyJWTError as e:
@@ -311,6 +317,9 @@ def _appstore_api_jwt() -> Optional[str]:
             key = serialization.load_pem_private_key(f.read(), password=None)
     except OSError as e:
         logger.warning("APPLE_PRIVATE_KEY_PATH unreadable: %s", e)
+        return None
+    if not isinstance(key, ec.EllipticCurvePrivateKey):
+        logger.warning("APPLE_PRIVATE_KEY_PATH must point at an EC P-256 key")
         return None
     now = int(time.time())
     payload = {

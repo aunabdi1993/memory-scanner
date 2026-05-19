@@ -21,7 +21,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional
+from typing import Callable, Generator, Optional
 
 import jwt
 import requests
@@ -59,7 +59,8 @@ def _env(name: str, default: Optional[str] = None) -> str:
 # JWKS caching                                                          #
 # --------------------------------------------------------------------- #
 
-_jwks_cache: dict[str, object] = {"fetched_at": 0.0, "keys": []}
+_jwks_fetched_at: float = 0.0
+_jwks_keys: list[dict] = []
 
 # Test seam: monkeypatch this in tests instead of stubbing requests.get.
 fetch_jwks: Callable[[], list[dict]] = lambda: _http_fetch_jwks()
@@ -72,16 +73,13 @@ def _http_fetch_jwks() -> list[dict]:
 
 
 def _get_apple_keys() -> list[dict]:
+    global _jwks_fetched_at, _jwks_keys
     now = time.time()
-    if (
-        _jwks_cache["keys"]
-        and now - float(_jwks_cache["fetched_at"]) < JWKS_CACHE_TTL_SECONDS
-    ):
-        return list(_jwks_cache["keys"])  # type: ignore[arg-type]
-    keys = fetch_jwks()
-    _jwks_cache["fetched_at"] = now
-    _jwks_cache["keys"] = keys
-    return keys
+    if _jwks_keys and now - _jwks_fetched_at < JWKS_CACHE_TTL_SECONDS:
+        return list(_jwks_keys)
+    _jwks_keys = fetch_jwks()
+    _jwks_fetched_at = now
+    return _jwks_keys
 
 
 def _public_key_for_kid(kid: str):
@@ -187,7 +185,7 @@ def verify_session_token(token: str) -> str:
 # --------------------------------------------------------------------- #
 
 
-def get_db() -> Session:
+def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
