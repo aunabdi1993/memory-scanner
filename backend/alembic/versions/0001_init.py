@@ -32,7 +32,7 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             nullable=False,
         ),
-      
+
         sa.Column(
             "lifetime_scans",
             sa.Integer(),

@@ -57,3 +57,16 @@ short-lived session JWT. We never see or store passwords.
 GitHub Actions runs `flake8` on the backend and `tsc --noEmit` on the
 app for every push and PR. See
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+## Pre-commit hooks (optional)
+
+Local hooks that catch trailing whitespace, missing newlines, merge-
+conflict markers, large files, and run `flake8` on the backend before
+each commit. CI runs the same checks on every PR — installing locally
+just saves a CI minute when you push.
+
+```bash
+pip install pre-commit
+pre-commit install     # one-time per clone
+pre-commit run --all-files   # ad-hoc full scan
+```

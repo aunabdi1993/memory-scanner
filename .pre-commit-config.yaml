@@ -1,0 +1,25 @@
+# Run locally with: pre-commit run --all-files
+# Install once per clone with: pip install pre-commit && pre-commit install
+#
+# JS / TypeScript checks are intentionally not wired here — CI runs
+# eslint + tsc on every push, and pre-commit's node integration is
+# brittle. Add husky + lint-staged separately if you want JS hooks.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.1.1
+    hooks:
+      - id: flake8
+        files: ^backend/.*\.py$
+        args: ['--config=backend/.flake8']
