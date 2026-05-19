@@ -2,6 +2,7 @@ import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Colors, Fonts, Radii, Spacing } from '../constants/theme';
+import { captureException } from '../services/sentry';
 
 interface State {
   error: Error | null;
@@ -20,8 +21,8 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    // Surface in dev tools; in prod this would feed Sentry.
     if (__DEV__) console.error('App error:', error, info.componentStack);
+    captureException(error, { componentStack: info.componentStack });
   }
 
   reset = () => this.setState({ error: null });

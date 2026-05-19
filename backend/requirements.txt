@@ -18,3 +18,5 @@ alembic==1.13.3
 gunicorn==22.0.0
 pydantic-settings==2.5.2
 slowapi==0.1.9
+sentry-sdk[fastapi]==2.18.0
+python-json-logger==2.0.7
