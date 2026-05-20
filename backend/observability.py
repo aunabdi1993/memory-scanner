@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import Any
 
 from pythonjsonlogger import jsonlogger
 
@@ -44,8 +44,13 @@ def init_logging() -> None:
     root.setLevel(level)
 
 
-def _scrub(event: dict, _hint: Optional[dict]) -> dict:
-    """Sentry before_send hook: strip auth headers / cookies."""
+def _scrub(event: Any, _hint: Any) -> Any:
+    """Sentry before_send hook: strip auth headers / cookies.
+
+    Typed as Any because sentry-sdk's Event type is a TypedDict and
+    extending it brings little safety here — we only ever poke at
+    request.headers.
+    """
     try:
         headers = event.get("request", {}).get("headers", {})
         for k in list(headers.keys()):

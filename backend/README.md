@@ -51,6 +51,18 @@ pytest tests/ -v
 OCR unit tests cover regex parsing only (no Tesseract binary needed).
 End-to-end `/scan` testing requires a real `tesseract` install.
 
+## Type checking
+
+```bash
+mypy .
+```
+
+Config lives in [`mypy.ini`](mypy.ini). `tests/`, `alembic/versions/`, and
+`scripts/` are excluded. Third-party libs without stubs
+(`piexif`, `pytesseract`, `cv2`, `slowapi`, `pythonjsonlogger`, `alembic`)
+have `ignore_missing_imports = True`. Run from `make lint` at the repo
+root.
+
 ## Layout
 
 ```

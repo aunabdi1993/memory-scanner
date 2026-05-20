@@ -12,6 +12,7 @@ app:
 
 lint:
 	cd backend && ./venv/bin/flake8 .
+	cd backend && ./venv/bin/mypy .
 	cd app && npx tsc --noEmit
 
 test:

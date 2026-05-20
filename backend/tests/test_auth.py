@@ -87,8 +87,8 @@ def test_verify_apple_token_validates_iss_aud_exp(monkeypatch):
 
     # Bypass the live JWKS fetch + cache.
     monkeypatch.setattr(auth, "fetch_jwks", lambda: [jwk])
-    auth._jwks_cache["fetched_at"] = 0
-    auth._jwks_cache["keys"] = []
+    monkeypatch.setattr(auth, "_jwks_fetched_at", 0.0)
+    monkeypatch.setattr(auth, "_jwks_keys", [])
 
     now = datetime.now(timezone.utc)
 

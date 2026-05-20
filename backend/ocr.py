@@ -164,10 +164,10 @@ def parse_detected_date(text: str) -> Optional[DateParts]:
     m = _PATTERN_DD_MON_YYYY.search(text)
     if m:
         day = int(m.group(1))
-        month = MONTH_NAME_TO_NUM.get(m.group(2).upper())
+        month_lookup = MONTH_NAME_TO_NUM.get(m.group(2).upper())
         year = int(m.group(3))
-        if month is not None:
-            result = _validate(year, month, day)
+        if month_lookup is not None:
+            result = _validate(year, month_lookup, day)
             if result is not None:
                 return result
 
